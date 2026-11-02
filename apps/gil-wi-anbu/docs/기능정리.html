@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>길 위의 안부 기능</title>
+<style>
+  :root { --bg:#f6f3ef; --fg:#2a2420; --muted:#7a6e66; --card:#fff; --line:#e6ddd4; --accent:#d9774b; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1d1916; --fg:#efe8e2; --muted:#a59a91; --card:#28221e; --line:#3a312b; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family:"Pretendard","Apple SD Gothic Neo","Malgun Gothic",sans-serif; line-height:1.6; }
+  main { max-width:1100px; margin:0 auto; padding:32px 16px 64px; }
+  h1 { font-size:28px; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0 0 28px; }
+  h2 { font-size:20px; margin:40px 0 12px; padding-top:16px; border-top:1px solid var(--line); }
+  h2 .n { color:var(--accent); margin-right:8px; }
+  .step { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin:16px 0; }
+  .step img { width:100%; border-radius:8px; display:block; border:1px solid var(--line); }
+  .step h3 { margin:0 0 6px; font-size:17px; }
+  .step ul { margin:8px 0 12px; padding-left:20px; }
+  table { width:100%; border-collapse:collapse; background:var(--card); border-radius:12px; overflow:hidden; }
+  th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:14px; }
+  .tag { display:inline-block; font-size:12px; padding:1px 8px; border-radius:99px; background:var(--accent); color:#fff; margin-left:6px; vertical-align:middle; }
+</style>
+</head>
+<body>
+<main>
+  <h1>길 위의 안부 — 주요 기능</h1>
+  <p class="sub">가족이 장소에 남긴 메시지를 그곳을 지날 때 차에서 들려주고, 하루 운전을 차가 일기로 써 주는 앱 · Pleos 에뮬레이터에서 2026-11-02 캡처</p>
+
+  <h2><span class="n">1</span>운전 흐름 (핵심)</h2>
+
+  <div class="step">
+    <h3>① 홈 — 정차(P) 중</h3>
+    <ul>
+      <li>왼쪽 큰 카드: <b>차가 쓴 오늘의 일기</b> (달린 거리 · 쉬어간 횟수 · 들은 메시지)</li>
+      <li>오른쪽: 지나온 길에서 받은 메시지, 가장 가까운 메시지 장소, 서클 소식</li>
+      <li>아래 버튼 6개: 메시지 남기기 · 서클 소식 · 오늘의 일기 · 공유 설정 · 운전자 바꾸기 · 사용자 관리</li>
+    </ul>
+    <img src="screens/1_home.png" alt="홈 화면">
+  </div>
+
+  <div class="step">
+    <h3>② 운전(D) 중 — 내비가 앞, 앱은 뒤에서</h3>
+    <ul>
+      <li>D로 바꾸면 앱 화면이 내비로 바뀜</li>
+      <li>메시지 장소 근처를 지나면 알림 한 번: “양재 사거리에 미성님의 메시지가 있어요 · 차를 세우면 들려드릴게요”</li>
+      <li>운전 중에는 재생하지 않고 모아 둠</li>
+    </ul>
+    <img src="screens/2_drive.png" alt="운전 중 도착 알림">
+  </div>
+
+  <div class="step">
+    <h3>③ 다시 정차(P) — 메시지 재생</h3>
+    <ul>
+      <li>P에 두면 앱이 앞으로 나와 받은 메시지를 들려줌 (글 메시지는 화면에 표시)</li>
+      <li>끝까지 들으면 <b>버튼 없이도</b> 카운트다운 뒤 「들었어요」 전송 (“8초 뒤 「들었어요」를 보내요”)</li>
+      <li>보내지 않기 · 나중에 · 신고 버튼</li>
+    </ul>
+    <img src="screens/3_play.png" alt="재생 화면">
+  </div>
+
+  <div class="step">
+    <h3>④ 들은 뒤 — 일기와 소식이 저절로 바뀜</h3>
+    <ul>
+      <li>일기: 1번 쉬었어요 · 1개 들었어요 · “미성이가 남긴 양재 사거리 이야기를 들으셨어요.”</li>
+      <li>서클 소식: “아버지님이 미성님의 양재 사거리 메시지를 들었어요” — 보낸 사람도 폰에서 확인</li>
+    </ul>
+    <img src="screens/4_after.png" alt="들은 뒤 홈">
+  </div>
+
+  <h2><span class="n">2</span>정차 중에만 쓰는 기능</h2>
+
+  <div class="step">
+    <h3>메시지 남기기</h3>
+    <ul>
+      <li>보내는 사람 선택 · 장소(지금 이 자리 / 저장된 장소) · 장소 이름 바꾸기</li>
+      <li>들려줄 범위 300m / 500m / 1km</li>
+      <li>목소리 녹음(60초) + 들어 보기, 또는 글(300자, 기계음으로 읽음)</li>
+      <li>남긴 사람 본인 차에서는 재생되지 않음</li>
+    </ul>
+    <img src="screens/5_leave.png" alt="메시지 남기기">
+  </div>
+
+  <div class="step">
+    <h3>서클 소식</h3>
+    <ul>
+      <li>누가 「들었어요」를 보냈는지, 가족 차의 일기(본인이 허락한 것만), 내가 남긴 메시지(지우기 가능)</li>
+    </ul>
+    <img src="screens/6_feed.png" alt="서클 소식">
+  </div>
+
+  <div class="step">
+    <h3>오늘의 일기</h3>
+    <ul>
+      <li>차가 쓴 일기 + 서클에 보이는 범위(기본: 나만 봐요) + 다른 가족 차의 일기</li>
+    </ul>
+    <img src="screens/7_diary.png" alt="오늘의 일기">
+  </div>
+
+  <h2><span class="n">3</span>기어별 동작</h2>
+  <table>
+    <tr><th>기어</th><th>동작</th></tr>
+    <tr><td>모름 (시동 직후)</td><td>기다림. 조작 버튼 숨김</td></tr>
+    <tr><td>P</td><td>앱 화면 사용 가능 · 받은 메시지 재생 · 입력은 이때만</td></tr>
+    <tr><td>D</td><td>내비로 전환 · 근처를 지나면 알림만 · 열린 입력 창은 닫음</td></tr>
+    <tr><td>R</td><td>재생만 멈춤 · 후방 카메라를 가리지 않게 내비를 띄우지 않음</td></tr>
+    <tr><td>N</td><td>재생 멈춤 · 조작 버튼 숨김</td></tr>
+  </table>
+
+  <h2><span class="n">4</span>뒤에서 하는 일</h2>
+  <table>
+    <tr><th>기능</th><th>내용</th></tr>
+    <tr><td>포그라운드 서비스</td><td>앱 화면을 닫아도 계속 돎 · 시동(부팅) 때 저절로 켜짐</td></tr>
+    <tr><td>상태 알림</td><td>“운전 중 · 받은 메시지 2개” 등 현재 상태 표시</td></tr>
+    <tr><td>재생 알림 버튼</td><td>들었어요 · 다시 듣기(카운트다운 중엔 보내지 않기) · 나중에</td></tr>
+    <tr><td>메시지 보관</td><td>앱이 꺼져도 그날 받은 메시지를 기기에 저장해 두었다가 되살림</td></tr>
+    <tr><td>위치 보호</td><td>현재 위치는 서버에 보내지 않음 · 근처 판단은 차 안에서</td></tr>
+    <tr><td>서버 재시도</td><td>평소 30초마다 새로 불러옴 · 실패하면 5초 뒤 다시</td></tr>
+  </table>
+
+  <h2><span class="n">5</span>확인 상태</h2>
+  <table>
+    <tr><th>항목</th><th>상태</th></tr>
+    <tr><td>홈 · 메시지 남기기 · 서클 소식 · 오늘의 일기 화면</td><td>✅ 이번 캡처</td></tr>
+    <tr><td>D 전환 시 내비 · 도착 알림 · P 재생 · 자동 「들었어요」 · 일기/소식 반영</td><td>✅ 이번 캡처</td></tr>
+    <tr><td>R에서 내비 안 띄움 · 쉬어간 횟수 · 앱 종료 후 메시지 복구</td><td>✅ 지난 시험</td></tr>
+    <tr><td>녹음</td><td>⬜ 나중에 (에뮬레이터 마이크 설정 필요)</td></tr>
+    <tr><td>알림 버튼 직접 누르기</td><td>⬜ 아직</td></tr>
+  </table>
+</main>
+</body>
+</html>

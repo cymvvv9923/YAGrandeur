@@ -1,0 +1,77 @@
+{
+  "circles": [
+    {
+      "id": "home",
+      "name": "우리집",
+      "type": "family",
+      "members": [
+        {
+          "id": "dad",
+          "name": "아버지",
+          "hasCar": true
+        },
+        {
+          "id": "mom",
+          "name": "어머니",
+          "hasCar": true
+        },
+        {
+          "id": "yongmin",
+          "name": "용민",
+          "hasCar": true
+        },
+        {
+          "id": "hyeonggyu",
+          "name": "형규",
+          "hasCar": true
+        },
+        {
+          "id": "wonwoo",
+          "name": "원우",
+          "hasCar": true
+        },
+        {
+          "id": "miseong",
+          "name": "미성",
+          "hasCar": true
+        }
+      ]
+    }
+  ],
+  "messages": [
+    {
+      "id": "msg_seed01",
+      "circleId": "home",
+      "authorId": "yongmin",
+      "authorName": "용민",
+      "placeName": "양평 국수집길",
+      "lat": 37.4917,
+      "lon": 127.4873,
+      "radiusM": 500,
+      "kind": "text",
+      "text": "여기 지날 때마다 누나가 뒷좌석에서 잤던 거 기억나? ㅋㅋ",
+      "audioUrl": null,
+      "createdAt": "2026-10-29T09:00:00.000Z",
+      "hidden": false,
+      "reports": []
+    },
+    {
+      "id": "msg_seed02",
+      "circleId": "home",
+      "authorId": "miseong",
+      "authorName": "미성",
+      "placeName": "양재 사거리",
+      "lat": 37.48544722,
+      "lon": 127.03636666,
+      "radiusM": 400,
+      "kind": "text",
+      "text": "아빠, 여기 지나면 예전에 같이 먹던 붕어빵 생각나요. 오늘도 조심히 운전하세요!",
+      "audioUrl": null,
+      "createdAt": "2026-10-29T09:10:00.000Z",
+      "hidden": false,
+      "reports": []
+    }
+  ],
+  "heard": [],
+  "diaries": []
+}

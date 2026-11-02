@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>길 위의 안부</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root { --bg:#f6f3ee; --card:#fff; --ink:#2b2723; --muted:#7a716a; --accent:#c8643b; --line:#e6dfd6; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,"Malgun Gothic",sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:16px; display:flex; justify-content:space-between; align-items:center; }
+  header h1 { font-size:20px; margin:0; }
+  select, input, textarea, button { font:inherit; }
+  main { max-width:560px; margin:0 auto; padding:0 16px 40px; }
+  .tabs { display:flex; gap:8px; margin-bottom:12px; }
+  .tabs button { flex:1; padding:10px; border:1px solid var(--line); background:var(--card); border-radius:10px; }
+  .tabs button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:12px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  input, textarea, select { width:100%; padding:10px; border:1px solid var(--line); border-radius:10px; background:#fff; }
+  textarea { min-height:80px; resize:vertical; }
+  #map { height:260px; border-radius:10px; }
+  .row { display:flex; gap:8px; }
+  .row > * { flex:1; }
+  .btn { padding:12px; border:0; border-radius:10px; background:var(--accent); color:#fff; width:100%; margin-top:12px; }
+  .btn.ghost { background:#efe8df; color:var(--ink); }
+  .seg { display:flex; gap:6px; }
+  .seg button { flex:1; padding:8px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  .seg button.on { border-color:var(--accent); color:var(--accent); font-weight:600; }
+  .muted { color:var(--muted); font-size:13px; }
+  .item { padding:10px 0; border-bottom:1px solid var(--line); }
+  .item:last-child { border-bottom:0; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  .chips button { padding:6px 10px; border:1px solid var(--line); border-radius:999px; background:#fff; font-size:13px; }
+  #toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#2b2723; color:#fff; padding:10px 16px; border-radius:10px; display:none; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>길 위의 안부</h1>
+  <select id="me" style="width:auto"></select>
+</header>
+<main>
+  <div class="tabs">
+    <button data-tab="write" class="on">남기기</button>
+    <button data-tab="feed">소식</button>
+    <button data-tab="mine">내 메시지</button>
+  </div>
+
+  <section id="tab-write">
+    <div class="card">
+      <label>언제 들려줄까요?</label>
+      <div class="seg" id="whenSeg" style="flex-wrap:wrap">
+        <button data-when="place" class="on">이 장소를 지나면</button>
+        <button data-when="rain">비 오는 날</button>
+        <button data-when="night">밤길</button>
+        <button data-when="together">옆자리에 누가 탄 날</button>
+        <button data-when="door">차에 탈 때</button>
+      </div>
+      <p class="muted" id="whenHelp">그 근처를 지나고 차를 세우면 들려줘요.</p>
+    </div>
+    <div class="card" id="placeCard">
+      <label>장소 (지도를 눌러 고르세요)</label>
+      <div id="map"></div>
+      <div class="chips" id="presets"></div>
+      <div class="row">
+        <div><label>장소 이름</label><input id="placeName" placeholder="예: 양평 국수집길"></div>
+        <div style="flex:0 0 110px"><label>반경(m)</label><input id="radius" type="number" value="300" min="100" max="2000"></div>
+      </div>
+      <p class="muted" id="coord">아직 장소를 고르지 않았어요</p>
+    </div>
+    <div class="card">
+      <div class="seg"><button data-kind="voice" class="on">내 목소리</button><button data-kind="text">글 → 기계음</button></div>
+      <div id="voiceBox">
+        <button class="btn ghost" id="recBtn">● 녹음 시작</button>
+        <audio id="preview" controls class="hidden" style="width:100%;margin-top:8px"></audio>
+      </div>
+      <div id="textBox" class="hidden">
+        <label>메시지</label>
+        <textarea id="text" maxlength="300" placeholder="그 길을 지날 때 들려줄 한마디"></textarea>
+        <button class="btn ghost hidden" id="sttBtn">🎤 말하면 글로 적어요</button>
+      </div>
+      <button class="btn" id="sendBtn">남기기</button>
+      <p class="muted">서클(우리집) 구성원만 들을 수 있어요. 조건이 맞으면 받는 사람이 차를 세웠을 때 재생돼요.</p>
+    </div>
+  </section>
+
+  <section id="tab-feed" class="hidden">
+    <div class="card"><b>들었어요</b><div id="heardList"></div></div>
+    <div class="card"><b>차의 일기</b><p class="muted">각자 공유하기로 한 항목만 보여요.</p><div id="diaryList"></div></div>
+  </section>
+
+  <section id="tab-mine" class="hidden">
+    <div class="card"><div id="mineList"></div></div>
+  </section>
+</main>
+<div id="toast"></div>
+
+<script>
+const CIRCLE = 'home';
+const $ = (id) => document.getElementById(id);
+let circle, kind = 'voice', when = 'place', picked = null, marker = null, audioBlob = null, recorder = null;
+
+// 언제 들려줄지: 장소 또는 차 상태 (차가 와이퍼·하향등·조수석·문으로 판단)
+const WHEN_HELP = {
+  place: '그 근처를 지나고 차를 세우면 들려줘요.',
+  rain: '와이퍼를 켠 날, 차를 세우면 들려줘요.',
+  night: '전조등을 켜고 달린 날, 차를 세우면 들려줘요.',
+  together: '조수석에 누가 탄 날, 차를 세우면 들려줘요.',
+  door: '다음에 차 문을 열고 탈 때 들려줘요.',
+};
+
+const PRESETS = [
+  { name: '양평 국수집길', lat: 37.4917, lon: 127.4873 },
+  { name: '양재 사거리', lat: 37.48544722, lon: 127.03636666 },
+  { name: '강남역', lat: 37.497952, lon: 127.027619 },
+  { name: '해운대 바닷길', lat: 35.1587, lon: 129.1604 },
+];
+
+function toast(t) { const e = $('toast'); e.textContent = t; e.style.display = 'block'; setTimeout(() => e.style.display = 'none', 2200); }
+async function api(method, url, body) {
+  const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j;
+}
+const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const me = () => $('me').value;
+const fmt = (iso) => new Date(iso).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+// 지도
+const map = L.map('map').setView([37.5, 127.2], 9);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '© OpenStreetMap' }).addTo(map);
+function pick(lat, lon, name) {
+  picked = { lat, lon };
+  if (marker) marker.setLatLng([lat, lon]); else marker = L.marker([lat, lon]).addTo(map);
+  if (name) $('placeName').value = name;
+  $('coord').textContent = `고른 장소: ${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+}
+map.on('click', (e) => pick(e.latlng.lat, e.latlng.lng));
+PRESETS.forEach((p) => {
+  const b = document.createElement('button'); b.textContent = p.name;
+  b.onclick = () => { pick(p.lat, p.lon, p.name); map.setView([p.lat, p.lon], 14); };
+  $('presets').appendChild(b);
+});
+
+// 탭
+document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => {
+  document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('on', x === b));
+  ['write', 'feed', 'mine'].forEach((t) => $('tab-' + t).classList.toggle('hidden', t !== b.dataset.tab));
+  if (b.dataset.tab === 'feed') loadFeed();
+  if (b.dataset.tab === 'mine') loadMine();
+  if (b.dataset.tab === 'write') setTimeout(() => map.invalidateSize(), 50);
+});
+
+// 언제
+document.querySelectorAll('#whenSeg button').forEach((b) => b.onclick = () => {
+  when = b.dataset.when;
+  document.querySelectorAll('#whenSeg button').forEach((x) => x.classList.toggle('on', x === b));
+  $('whenHelp').textContent = WHEN_HELP[when];
+  $('placeCard').classList.toggle('hidden', when !== 'place');
+  if (when === 'place') setTimeout(() => map.invalidateSize(), 50);
+});
+
+// 음성/글
+document.querySelectorAll('.seg button[data-kind]').forEach((b) => b.onclick = () => {
+  kind = b.dataset.kind;
+  document.querySelectorAll('.seg button[data-kind]').forEach((x) => x.classList.toggle('on', x === b));
+  $('voiceBox').classList.toggle('hidden', kind !== 'voice');
+  $('textBox').classList.toggle('hidden', kind !== 'text');
+});
+
+$('recBtn').onclick = async () => {
+  if (recorder && recorder.state === 'recording') { recorder.stop(); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const chunks = [];
+    recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+    recorder.ondataavailable = (e) => chunks.push(e.data);
+    recorder.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      audioBlob = new Blob(chunks, { type: 'audio/webm' });
+      $('preview').src = URL.createObjectURL(audioBlob);
+      $('preview').classList.remove('hidden');
+      $('recBtn').textContent = '● 다시 녹음';
+    };
+    recorder.start();
+    $('recBtn').textContent = '■ 녹음 끝내기';
+  } catch (e) { toast('마이크를 쓸 수 없어요. 글로 남겨 주세요.'); }
+};
+
+// 말하면 글로 적기 (브라우저 음성 인식이 있을 때만 버튼을 보인다)
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let stt = null;
+if (SR) {
+  $('sttBtn').classList.remove('hidden');
+  $('sttBtn').onclick = () => {
+    if (stt) { stt.stop(); return; }
+    const before = $('text').value.trim();
+    stt = new SR();
+    stt.lang = 'ko-KR'; stt.interimResults = true;
+    stt.onresult = (e) => {
+      const said = Array.from(e.results).map((r) => r[0].transcript).join('');
+      $('text').value = [before, said].filter(Boolean).join(' ').slice(0, 300);
+    };
+    stt.onerror = (e) => toast(e.error === 'not-allowed' ? '마이크를 허락해 주세요' : '말소리를 알아듣지 못했어요');
+    stt.onend = () => { stt = null; $('sttBtn').textContent = '🎤 말로 이어 쓰기'; };
+    stt.start();
+    $('sttBtn').textContent = '■ 다 말했어요';
+  };
+}
+
+function blobToBase64(blob) {
+  return new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.readAsDataURL(blob); });
+}
+
+$('sendBtn').onclick = async () => {
+  if (when === 'place' && !picked) return toast('지도에서 장소를 골라 주세요');
+  const body = when === 'place'
+    ? { authorId: me(), when, placeName: $('placeName').value.trim(), lat: picked.lat, lon: picked.lon, radiusM: Number($('radius').value), kind }
+    : { authorId: me(), when, kind };
+  if (kind === 'voice') {
+    if (!audioBlob) return toast('먼저 녹음해 주세요');
+    body.audioBase64 = await blobToBase64(audioBlob); body.audioExt = 'webm';
+  } else {
+    body.text = $('text').value.trim();
+    if (!body.text) return toast('메시지를 써 주세요');
+  }
+  try {
+    await api('POST', `/api/circles/${CIRCLE}/messages`, body);
+    toast('남겼어요');
+    $('text').value = ''; audioBlob = null; $('preview').classList.add('hidden'); $('recBtn').textContent = '● 녹음 시작';
+  } catch (e) { toast(e.message); }
+};
+
+async function loadFeed() {
+  const f = await api('GET', `/api/circles/${CIRCLE}/feed`);
+  const heard = f.heard.filter((h) => h.authorId === me()).sort((a, b) => b.at.localeCompare(a.at));
+  $('heardList').innerHTML = heard.length ? heard.map((h) => `<div class="item">${esc(h.memberName)}님이 <b>${esc(h.when && h.when !== 'place' ? '「' + h.placeName + '」' : h.placeName)}</b>에 남긴 메시지를 들으셨어요<div class="muted">${fmt(h.at)}</div></div>`).join('')
+    : '<p class="muted">아직 없어요. 내가 남긴 메시지를 누군가 들으면 여기에 보여요.</p>';
+  const diaries = f.diaries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  $('diaryList').innerHTML = diaries.length ? diaries.map((d) => `<div class="item"><b>${esc(d.memberName)}</b> · ${d.date}<div>${esc(d.text)}</div></div>`).join('')
+    : '<p class="muted">공유된 일기가 없어요.</p>';
+}
+
+async function loadMine() {
+  const list = (await api('GET', `/api/circles/${CIRCLE}/messages`)).filter((m) => m.authorId === me());
+  $('mineList').innerHTML = list.length ? list.map((m) => `<div class="item"><b>${esc(m.placeName)}</b> · ${m.kind === 'voice' ? '목소리' : '글'}<div>${esc(m.text)}</div>${m.audioUrl ? `<audio controls src="${m.audioUrl}" style="width:100%"></audio>` : ''}<button class="btn ghost" onclick="del('${m.id}')">지우기</button></div>`).join('')
+    : '<p class="muted">남긴 메시지가 없어요.</p>';
+}
+async function del(id) { await api('POST', `/api/messages/${id}/delete`, { memberId: me() }); loadMine(); }
+
+(async () => {
+  circle = await api('GET', `/api/circles/${CIRCLE}`);
+  $('me').innerHTML = circle.members.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join('');
+  $('me').value = 'yongmin';
+  $('me').onchange = () => { if (!$('tab-feed').classList.contains('hidden')) loadFeed(); if (!$('tab-mine').classList.contains('hidden')) loadMine(); };
+})();
+</script>
+</body>
+</html>
