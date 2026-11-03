@@ -112,6 +112,14 @@ class TripStore(context: Context) {
         return true
     }
 
+    /** 「보내지 않기」를 고른 메시지. 앱이 다시 켜져 또 재생돼도 그날은 자동으로 「들었어요」를 보내지 않는다. */
+    fun markNoAutoHeard(messageId: String) {
+        resetIfNewDay()
+        val set = prefs.getStringSet("noAutoHeard", emptySet())!!
+        if (messageId !in set) prefs.edit().putStringSet("noAutoHeard", set + messageId).apply()
+    }
+    fun isNoAutoHeard(messageId: String): Boolean { resetIfNewDay(); return messageId in prefs.getStringSet("noAutoHeard", emptySet())!! }
+
     fun addHeard(item: HeardItem) {
         resetIfNewDay()
         val list = heard.filter { it.messageId != item.messageId } + item

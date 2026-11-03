@@ -348,6 +348,12 @@ object Engine : CarSignals.Listener {
 
     private fun startAutoHeard(m: PlaceMessage, sec: Int) {
         if (!store.autoHeard) return
+        if (store.isNoAutoHeard(m.id)) {
+            playState = "알리지 않았어요 · 「들었어요」를 누르면 알려요"
+            Notifier.playing(m, playState)
+            changed()
+            return
+        }
         autoHeardMsg = m
         autoHeardLeft = sec
         main.removeCallbacks(autoHeardTick)
@@ -365,6 +371,7 @@ object Engine : CarSignals.Listener {
         val m = playing ?: return
         if (autoHeardLeft <= 0 && autoHeardMsg == null) return
         stopAutoHeard()
+        store.markNoAutoHeard(m.id)
         playState = "알리지 않았어요 · 「들었어요」를 누르면 알려요"
         Notifier.playing(m, playState)
         changed()
