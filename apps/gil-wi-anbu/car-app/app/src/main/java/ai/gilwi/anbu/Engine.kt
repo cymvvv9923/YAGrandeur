@@ -113,10 +113,15 @@ object Engine : CarSignals.Listener {
     fun refreshMessages() = Api.loadMessages(BuildConfig.CIRCLE_ID) { list ->
         if (list != null) {
             messages = list
+            // 그사이 신고로 숨겨졌거나 지워진 메시지는 대기열에서도 뺀다
+            val ids = list.map { it.id }.toSet()
+            pending.removeAll { it.id !in ids }
+            skipped.removeAll { it.id !in ids }
             if (!pendingRestored) {
                 pendingRestored = true
-                // 앱이 꺼졌다 켜져도 오늘 받은 메시지를 잃지 않게
-                store.pendingIds.mapNotNull { id -> list.firstOrNull { it.id == id } }.forEach { if (it !in pending) pending.add(it) }
+                // 앱이 꺼졌다 켜져도 오늘 받은 메시지를 잃지 않게 (「보내지 않기」한 것은 들은 것으로 쳐서 빼고)
+                store.pendingIds.filter { !store.isNoAutoHeard(it) }
+                    .mapNotNull { id -> list.firstOrNull { it.id == id } }.forEach { if (it !in pending) pending.add(it) }
             }
             lastLoc?.let { matchNearby(it.first, it.second) }
             matchCarState()
@@ -178,7 +183,8 @@ object Engine : CarSignals.Listener {
             // 운전을 시작하면 재생을 멈추고 대기열로 돌려놓는다
             playing?.let {
                 player.stop()
-                pending.add(0, it)
+                // 「보내지 않기」한 것은 들은 것으로 친다(알리지만 않음). 다시 넣으면 정차할 때마다 또 나온다.
+                if (!store.isNoAutoHeard(it.id)) pending.add(0, it)
                 playing = null
                 pending.addAll(skipped); skipped.clear()
                 Notifier.clearPlaying()
@@ -333,13 +339,15 @@ object Engine : CarSignals.Listener {
     var autoHeardLeft = 0
         private set
     private var autoHeardMsg: PlaceMessage? = null
+    private var autoHeardFrom = 0
     private val autoHeardTick = object : Runnable {
         override fun run() {
             val m = autoHeardMsg ?: return
             if (playing?.id != m.id) return
             if (autoHeardLeft <= 0) { autoHeardMsg = null; heard(); return }
             playState = "${autoHeardLeft}초 뒤 「들었어요」를 보내요"
-            Notifier.playing(m, playState, countdown = true)
+            // 알림은 떠 있는 동안 내용이 늦게 바뀌어 화면과 숫자가 어긋난다. 그래서 알림에는 처음 한 번만 숫자 없이 쓴다.
+            if (autoHeardLeft == autoHeardFrom) Notifier.playing(m, "잠시 뒤 「들었어요」를 보내요", countdown = true)
             changed()
             autoHeardLeft--
             main.postDelayed(this, 1000)
@@ -356,6 +364,7 @@ object Engine : CarSignals.Listener {
         }
         autoHeardMsg = m
         autoHeardLeft = sec
+        autoHeardFrom = sec
         main.removeCallbacks(autoHeardTick)
         main.post(autoHeardTick)
     }

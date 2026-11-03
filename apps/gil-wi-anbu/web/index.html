@@ -242,7 +242,7 @@ async function loadFeed() {
   $('heardList').innerHTML = heard.length ? heard.map((h) => `<div class="item">${esc(h.memberName)}님이 <b>${esc(h.when && h.when !== 'place' ? '「' + h.placeName + '」' : h.placeName)}</b>에 남긴 메시지를 들으셨어요<div class="muted">${fmt(h.at)}</div></div>`).join('')
     : '<p class="muted">아직 없어요. 내가 남긴 메시지를 누군가 들으면 여기에 보여요.</p>';
   const diaries = f.diaries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  $('diaryList').innerHTML = diaries.length ? diaries.map((d) => `<div class="item"><b>${esc(d.memberName)}</b> · ${d.date}<div>${esc(d.text)}</div></div>`).join('')
+  $('diaryList').innerHTML = diaries.length ? diaries.map((d) => `<div class="item"><b>${esc(d.memberName)}</b> · ${esc(d.date)}<div>${esc(d.text)}</div></div>`).join('')
     : '<p class="muted">공유된 일기가 없어요.</p>';
 }
 

@@ -72,6 +72,7 @@ const MIME = {
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.webm': 'audio/webm',
+  '.wav': 'audio/wav',
   '.ogg': 'audio/ogg',
   '.m4a': 'audio/mp4',
   '.mp3': 'audio/mpeg',
@@ -287,6 +288,8 @@ route('POST', '/api/circles/:circleId/diaries', async (req, res, p) => {
   if (!circle) return send(res, 404, { error: 'circle not found' });
   const b = await readBody(req);
   if (!circle.members.some((m) => m.id === b.memberId)) return send(res, 400, { error: 'not a member' });
+  // 날짜는 폰 웹 화면에 그대로 나가므로 형식을 지킨다 (HTML이 들어오면 스크립트가 실행될 수 있다)
+  if (b.date !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(b.date)) return send(res, 400, { error: 'date는 YYYY-MM-DD' });
   const date = b.date || new Date().toISOString().slice(0, 10);
   db.diaries = db.diaries.filter((d) => !(d.circleId === circle.id && d.memberId === b.memberId && d.date === date));
   db.diaries.push({
@@ -333,8 +336,13 @@ route('POST', '/api/dev/reset', (req, res) => {
 
 http
   .createServer(async (req, res) => {
-    const url = new URL(req.url, 'http://localhost');
-    const pathname = decodeURIComponent(url.pathname);
+    // 깨진 주소(%E0%A4%A 같은)는 decodeURIComponent가 예외를 던진다. try 밖에서 던지면 서버가 통째로 꺼진다.
+    let pathname;
+    try {
+      pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+    } catch (e) {
+      return send(res, 400, { error: 'bad url' });
+    }
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
         'Access-Control-Allow-Origin': '*',

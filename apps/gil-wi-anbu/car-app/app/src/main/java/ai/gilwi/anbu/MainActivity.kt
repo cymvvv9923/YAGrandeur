@@ -49,6 +49,8 @@ class MainActivity : Activity(), Engine.Ui {
 
     private lateinit var root: LinearLayout
     private var screen = Screen.HOME
+    private var playStateView: TextView? = null
+    private var playKey: String? = null
     /** 뒤로 가기용 화면 기록 */
     private val history = ArrayDeque<Screen>()
     /** 정차 때 Engine이 앞으로 띄운 화면이면, 재생이 끝나거나 출발하면 내비로 돌아간다 */
@@ -101,6 +103,7 @@ class MainActivity : Activity(), Engine.Ui {
     override fun onStart() {
         super.onStart()
         Engine.uiVisible = true
+        if (::root.isInitialized) takeFocusForPlayback()
     }
 
     override fun onResume() {
@@ -156,7 +159,18 @@ class MainActivity : Activity(), Engine.Ui {
 
     // Engine에서 오는 신호 ------------------------------------------------------------
 
-    override fun changed() = render()
+    override fun changed() {
+        // 재생 화면의 카운트다운은 1초마다 바뀐다. 매번 화면을 새로 만들면 누르는 사이에 버튼이 바뀌어 눌림이 사라지므로,
+        // 버튼 구성이 그대로면 상태 한 줄만 고친다.
+        if (screen == Screen.PLAY && playKey == playKey()) {
+            playStateView?.text = playState
+            return
+        }
+        render()
+    }
+
+    /** 재생 화면의 버튼 구성이 달라지는지 가리는 값 */
+    private fun playKey() = "${playing?.id}|${Engine.autoHeardLeft > 0}|${pending.isEmpty()}"
 
     override fun onNeedDriver() {
         Log.d("운전자 필요 screen=$screen")
@@ -180,6 +194,21 @@ class MainActivity : Activity(), Engine.Ui {
     override fun onPlayback() {
         if (screen != Screen.PLAY) { history.addLast(screen); screen = Screen.PLAY }
         render()
+        takeFocusForPlayback()
+    }
+
+    /**
+     * Pleos 화면 나눔에서는 정차 직후 포커스가 주행 화면에 남아 있어, 첫 번째 터치는 포커스만 옮기고 버튼은 눌리지 않는다.
+     * 재생 화면이 보이는데 포커스가 없으면 스스로 앞으로 와서 포커스를 가져온다(보이는 동안에만 허용된다).
+     * 정차 직후엔 Pleos가 화면을 늦게 보여 주므로 onStart에서도 부른다.
+     */
+    private fun takeFocusForPlayback() {
+        root.postDelayed({
+            if (screen == Screen.PLAY && Engine.uiVisible && !hasWindowFocus()) {
+                Log.d("재생 화면에 포커스 가져오기")
+                runCatching { startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)) }
+            }
+        }, 500)
     }
 
     override fun onPlaybackEnd() {
@@ -194,6 +223,7 @@ class MainActivity : Activity(), Engine.Ui {
         if (!::root.isInitialized) return
         // 설정·입력 화면에 있는 동안은 자동 재생을 미룬다
         Engine.uiBusy = screen != Screen.HOME && screen != Screen.PLAY
+        playKey = null // renderPlay가 다시 정한다
         root.removeAllViews()
         if (screen != Screen.HOME) root.addView(navBar())
         when (screen) {
@@ -346,7 +376,8 @@ class MainActivity : Activity(), Engine.Ui {
 
     private fun renderPlay() {
         val m = playing ?: run { screen = Screen.HOME; renderHome(); return }
-        root.addView(label(playState))
+        playKey = playKey()
+        root.addView(label(playState).also { playStateView = it })
         root.addView(title("${m.authorName}님이 ${m.occasion} 남긴 메시지"))
         if (m.kind == "text") root.addView(card(listOf(big("“${m.text}”"))))
         root.addView(space(12))
