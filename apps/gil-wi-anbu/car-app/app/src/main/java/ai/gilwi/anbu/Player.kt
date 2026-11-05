@@ -34,6 +34,32 @@ class Player(private val context: Context) {
     private var androidReady = false
     val ttsReady get() = pleosReady || androidReady
 
+    // 재생 막대용 ---------------------------------------------------------
+    /** 목소리 파일을 다 받아 재생할 수 있다 */
+    private var prepared = false
+    /** 기계음은 길이를 알 수 없어 글자 수로 어림한다. 읽기 시작한 때(0이면 읽는 중 아님) */
+    private var speakStartedAt = 0L
+    private var speakEstimate = 0
+    private var speakFinished = false
+    /** 목소리를 잠깐 멈췄다 */
+    var paused = false
+        private set
+    /** 목소리 메시지라 막대로 옮기고 멈출 수 있다 */
+    val seekable get() = media != null && prepared
+    /** 지금 재생 위치(ms) */
+    val position: Int
+        get() = media?.takeIf { prepared }?.let { runCatching { it.currentPosition }.getOrDefault(0) }
+            ?: when { speakFinished -> speakEstimate; speakStartedAt > 0 -> (android.os.SystemClock.uptimeMillis() - speakStartedAt).toInt().coerceAtMost(speakEstimate); else -> 0 }
+    /** 전체 길이(ms). 모르면 0 */
+    val duration: Int
+        get() = media?.let { m -> if (prepared) runCatching { m.duration }.getOrDefault(0) else 0 } ?: speakEstimate
+
+    fun pause() { media?.takeIf { prepared && it.isPlaying }?.let { it.pause(); paused = true } }
+    /** 소리가 나는 중인지 (끝까지 들은 뒤엔 false: 다시 누르면 처음부터) */
+    val playingNow get() = media?.takeIf { prepared }?.let { runCatching { it.isPlaying }.getOrDefault(false) } ?: (speakStartedAt > 0 && !speakFinished)
+    fun resume() { media?.takeIf { prepared }?.let { it.start(); paused = false } }
+    fun seekTo(ms: Int) { media?.takeIf { prepared }?.let { it.seekTo(ms.coerceIn(0, it.duration)) } }
+
     init {
         initPleos()
     }
@@ -124,6 +150,12 @@ class Player(private val context: Context) {
     }
 
     fun speak(text: String, done: (Boolean) -> Unit) {
+        // 막대용 어림 길이: 한국어 기계음은 1초에 7글자쯤
+        speakStartedAt = android.os.SystemClock.uptimeMillis()
+        speakEstimate = (text.length * 140).coerceAtLeast(2000)
+        speakFinished = false
+        val outer = done
+        @Suppress("NAME_SHADOWING") val done: (Boolean) -> Unit = { ok -> speakFinished = true; outer(ok) }
         val p = pleos
         if (pleosReady && p != null) {
             pleosDone = done
@@ -154,7 +186,7 @@ class Player(private val context: Context) {
         try {
             mp.setAudioAttributes(speech)
             mp.setDataSource(url)
-            mp.setOnPreparedListener { it.start() }
+            mp.setOnPreparedListener { prepared = true; it.start() }
             mp.setOnCompletionListener { done(true) }
             mp.setOnErrorListener { _, what, extra -> Log.d("재생 오류 $what/$extra"); done(false); true }
             mp.prepareAsync()
@@ -167,6 +199,8 @@ class Player(private val context: Context) {
     fun stop() {
         media?.runCatching { stop(); release() }
         media = null
+        prepared = false; paused = false
+        speakStartedAt = 0L; speakEstimate = 0; speakFinished = false
         // 멈춘 글은 끝난 것으로 알리지 않는다 (안드로이드 TTS의 stop도 onDone을 부르지 않는다)
         pleosDone = null
         retry = null

@@ -87,6 +87,9 @@ object Notifier {
     /** 정차 중 재생: 화면이 내비에 가려도 알림에서 「들었어요」를 누를 수 있게. */
     fun playing(m: PlaceMessage, state: String, countdown: Boolean = false) {
         if (!ready) return
+        // 화면이 보이면 재생 화면에 같은 버튼이 있다. Pleos는 알림을 화면 위에 띄워 재생 막대를 가리므로 화면이 보이는 동안엔 띄우지 않는다.
+        // 화면이 가려지면(MainActivity.onStop) 다시 부른다.
+        if (Engine.uiVisible) { nm.cancel(MESSAGE_ID); return }
         nm.notify(MESSAGE_ID, builder(CH_MESSAGE)
             .setContentTitle("${m.authorName}님이 ${m.occasion} 남긴 메시지")
             .setContentText(if (m.kind == "text") "$state · “${m.text}”" else state)

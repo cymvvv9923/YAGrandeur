@@ -31,8 +31,19 @@ const MAX_PHOTO_BYTES = 1.5 * 1024 * 1024;
 
 fs.mkdirSync(MEDIA_DIR, { recursive: true });
 
+/** 시연용 목소리 파일(seed-media)을 media 폴더에 둔다. 이미 있으면 그대로 */
+function copySeedMedia() {
+  const dir = path.join(__dirname, 'seed-media');
+  if (!fs.existsSync(dir)) return;
+  for (const f of fs.readdirSync(dir)) {
+    const to = path.join(MEDIA_DIR, f);
+    if (!fs.existsSync(to)) fs.copyFileSync(path.join(dir, f), to);
+  }
+}
+
 function loadDb() {
   if (!fs.existsSync(DB_FILE)) fs.copyFileSync(SEED_FILE, DB_FILE);
+  copySeedMedia();
   const d = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
   // 이전 형식(db.json)에서 올라온 경우 빈 칸을 채운다
   d.devices = d.devices || [];

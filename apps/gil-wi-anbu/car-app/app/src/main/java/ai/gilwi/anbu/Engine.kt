@@ -572,6 +572,33 @@ object Engine : CarSignals.Listener {
         startPlayback(announce = false)
     }
 
+    // 재생 막대 (재생 화면) ---------------------------------------------------
+
+    val playPosition get() = player.position
+    val playDuration get() = player.duration
+    /** 목소리 메시지라 멈추고 옮길 수 있다 (기계음은 막대만 보인다) */
+    val playSeekable get() = player.seekable
+    val playPaused get() = player.paused
+    /** 기계음(TTS)을 쓸 수 있는지. 못 쓰면 글로만 보여 준다 */
+    val ttsReady get() = player.ttsReady
+    val playPlayingNow get() = player.playingNow
+
+    fun togglePause() {
+        if (playing == null) return
+        if (player.playingNow) player.pause() else {
+            // 끝까지 들은 뒤 다시 누르면 처음부터
+            if (player.duration > 0 && player.position >= player.duration - 300) player.seekTo(0)
+            player.resume()
+        }
+        changed()
+    }
+
+    fun seekPlay(ms: Int) {
+        if (playing == null) return
+        player.seekTo(ms)
+        changed()
+    }
+
     /** 지도·목록에서 고른 메시지 하나를 다시 듣는다 (「들었어요」는 또 보내지 않는다) */
     fun replay(m: PlaceMessage) {
         if (parked != true) return

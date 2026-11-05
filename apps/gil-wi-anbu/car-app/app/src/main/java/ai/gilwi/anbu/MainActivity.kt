@@ -175,6 +175,8 @@ class MainActivity : Activity(), Engine.Ui {
 
     override fun onStop() {
         Engine.uiVisible = false
+        // 재생 중에 화면이 가려지면 알림으로 「들었어요·나중에」를 누를 수 있게
+        playing?.let { Notifier.playing(it, playState) }
         super.onStop()
     }
 
@@ -659,7 +661,9 @@ class MainActivity : Activity(), Engine.Ui {
     /** 가장 가까운 메시지 장소 한 줄 (홈용으로 짧게) */
     private fun nearestShort(): String? {
         val loc = lastLoc ?: return null
-        val near = messages.filter { it.isPlace && !isMine(it) }
+        // 이미 들은 곳은 빼고 아직 못 찾은 안부 중에서
+        val found = foundIds()
+        val near = messages.filter { it.isPlace && !isMine(it) && it.id !in found }
             .minByOrNull { distanceM(loc.first, loc.second, it.lat, it.lon) } ?: return null
         val d = distanceM(loc.first, loc.second, near.lat, near.lon)
         return "근처 메시지 · ${near.placeName} ${if (d < 1000) "${d.toInt()}m" else "%.1fkm".format(d / 1000)}"
@@ -988,6 +992,7 @@ class MainActivity : Activity(), Engine.Ui {
         root.addView(label(playState).also { playStateView = it })
         root.addView(title("${m.authorName}님이 ${m.occasion} 남긴 메시지"))
         if (m.kind == "text") root.addView(card(listOf(big("“${m.text}”"))))
+        root.addView(playBar(m))
         root.addView(space(12))
         root.addView(primary("들었어요") { Engine.heard() }, LinearLayout.LayoutParams(-1, dp(120)))
         root.addView(row(
@@ -1003,6 +1008,71 @@ class MainActivity : Activity(), Engine.Ui {
             toast(if (Engine.addStopover(m)) "${m.placeName}을(를) 경유지에 넣었어요" else "경유지를 넣지 못했어요")
         }))
         root.addView(label("「들었어요」를 누르면 ${m.authorName}님에게 알려요." + if (store.autoHeard) " 끝까지 들으면 누르지 않아도 알려요 (공유 설정에서 끌 수 있어요)." else " 누르지 않으면 아무것도 전해지지 않아요."))
+    }
+
+    // 재생 막대: 목소리는 멈춤·5초 앞뒤·막대로 옮기기, 기계음은 진행만 보인다 ------------------
+
+    private var playSeek: android.widget.SeekBar? = null
+    private var playTime: TextView? = null
+    private var playToggle: Button? = null
+    private var playDragging = false
+    private val playTick = object : Runnable {
+        override fun run() {
+            if (screen != Screen.PLAY || playing == null) return
+            updatePlayBar()
+            root.postDelayed(this, 250)
+        }
+    }
+
+    private fun playBar(m: PlaceMessage) = card(listOf(
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            if (m.kind == "voice") {
+                addView(navButton("⏪ 5초") { Engine.seekPlay(Engine.playPosition - PREVIEW_JUMP_MS) })
+                addView(navButton("") { Engine.togglePause(); updatePlayBar() }.also { playToggle = it },
+                    LinearLayout.LayoutParams(dp(240), dp(72)).apply { marginStart = dp(14) })
+                addView(navButton("5초 ⏩") { Engine.seekPlay(Engine.playPosition + PREVIEW_JUMP_MS) },
+                    LinearLayout.LayoutParams(dp(220), dp(72)).apply { marginStart = dp(14) })
+            } else addView(label(if (Engine.ttsReady) "기계음으로 읽어요 · 길이는 어림이에요" else "기계음을 쓸 수 없어 글로 보여 드려요"))
+            addView(text("", 24f, MUTED).apply { gravity = Gravity.END }.also { playTime = it }, LinearLayout.LayoutParams(0, -2, 1f))
+            setPadding(0, dp(4), 0, dp(4))
+        },
+        android.widget.SeekBar(this).apply {
+            progressTintList = android.content.res.ColorStateList.valueOf(ACCENT)
+            thumbTintList = android.content.res.ColorStateList.valueOf(if (m.kind == "voice") ACCENT else Color.TRANSPARENT)
+            minimumHeight = dp(56)
+            setPadding(dp(24), dp(16), dp(24), dp(16))
+            isEnabled = m.kind == "voice"
+            if (m.kind != "voice" && !Engine.ttsReady) visibility = View.GONE
+            setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: android.widget.SeekBar, v: Int, fromUser: Boolean) {
+                    if (fromUser) playTime?.text = "${mmss(v)} / ${mmss(sb.max)}"
+                }
+                override fun onStartTrackingTouch(sb: android.widget.SeekBar) { playDragging = true }
+                override fun onStopTrackingTouch(sb: android.widget.SeekBar) { playDragging = false; Engine.seekPlay(sb.progress); updatePlayBar() }
+            })
+        }.also { playSeek = it },
+    )).also {
+        root.removeCallbacks(playTick)
+        root.post(playTick)
+    }
+
+    private fun updatePlayBar() {
+        val dur = Engine.playDuration
+        val pos = Engine.playPosition
+        playToggle?.text = when {
+            Engine.playPlayingNow -> "⏸ 일시정지"
+            dur > 0 && pos >= dur - 300 -> "▶ 처음부터"
+            dur > 0 -> "▶ 계속 듣기"
+            else -> "불러오는 중…"
+        }
+        if (playing?.kind != "voice" && !Engine.ttsReady) { playTime?.text = ""; return }
+        if (!playDragging) {
+            playSeek?.max = dur.coerceAtLeast(1)
+            playSeek?.progress = pos
+            playTime?.text = if (dur > 0) "${mmss(pos)} / ${mmss(dur)}" else ""
+        }
     }
 
     /**
@@ -1283,7 +1353,7 @@ class MainActivity : Activity(), Engine.Ui {
             }, panelParams())
         }
         side.addView(waitingPanel(), panelParams())
-        selMessage?.takeIf { m -> messages.any { it.id == m.id } }?.let { side.addView(selectedCard(it), panelParams()) }
+        selMessage?.takeIf { m -> visibleMessages().any { it.id == m.id } }?.let { side.addView(selectedCard(it), panelParams()) }
         selRegion?.let { side.addView(regionCard(it), panelParams()) }
         side.addView(conditionCard(), panelParams())
         side.addView(filterCard(), panelParams())
@@ -2168,7 +2238,8 @@ class MainActivity : Activity(), Engine.Ui {
     /** 가장 가까운 메시지 장소까지 거리. 계산은 차 안에서만 한다. */
     private fun nearestText(): String {
         val loc = lastLoc ?: return "위치 확인 중"
-        val near = messages.filter { it.isPlace && it.authorId != store.driverId }
+        val found = foundIds()
+        val near = messages.filter { it.isPlace && !isMine(it) && it.id !in found }
             .minByOrNull { distanceM(loc.first, loc.second, it.lat, it.lon) } ?: return "위치는 이 차 안에서만 써요"
         val d = distanceM(loc.first, loc.second, near.lat, near.lon)
         val dist = if (d < 1000) "${d.toInt()}m" else "%.1fkm".format(d / 1000)
