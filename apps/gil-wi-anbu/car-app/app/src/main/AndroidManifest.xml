@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-feature android:name="android.hardware.type.automotive" android:required="true" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 발견 지도(osmdroid)가 타일을 받기 전에 인터넷이 되는지 본다 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- 내비가 앞에 있어도 뒤에서 동작 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

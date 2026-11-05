@@ -9,6 +9,106 @@ import java.util.Locale
 class TripStore(context: Context) {
 
     private val prefs = context.getSharedPreferences("gilwi", Context.MODE_PRIVATE)
+    /** 이 차의 가족 연결(열쇠). 날짜가 바뀌어도 지우지 않으므로 오늘 기록과 다른 파일에 둔다. */
+    private val device = context.getSharedPreferences("gilwi_device", Context.MODE_PRIVATE)
+
+    // 모임 연결 ------------------------------------------------------------
+    // 차 한 대가 가족·친구 등 여러 모임에 들어갈 수 있다. 모임마다 서버가 준 열쇠와 그 모임에서의 차 주인이 따로 있다.
+    // 화면의 모임 관리·남기기는 「지금 관리하는 모임」(active) 하나를 다루고, 지도·재생은 모든 모임을 함께 쓴다.
+
+    /** 모임 하나와의 연결. circleId가 빈 것은 예전 형식에서 옮겨 와 아직 모임을 받지 못한 것 */
+    data class Membership(val key: String, val circleId: String, val ownerId: String?, val carName: String)
+
+    val memberships: List<Membership>
+        get() {
+            migrate()
+            val arr = runCatching { org.json.JSONArray(device.getString("memberships", "[]")) }.getOrElse { org.json.JSONArray() }
+            return (0 until arr.length()).map { i ->
+                arr.getJSONObject(i).let { Membership(it.getString("key"), it.optString("circleId"), it.optString("ownerId").ifBlank { null }, it.optString("carName")) }
+            }
+        }
+
+    private fun saveMemberships(list: List<Membership>) {
+        val arr = org.json.JSONArray()
+        list.forEach { arr.put(org.json.JSONObject().put("key", it.key).put("circleId", it.circleId).put("ownerId", it.ownerId ?: "").put("carName", it.carName)) }
+        device.edit().putString("memberships", arr.toString()).apply()
+    }
+
+    /** 예전(모임 하나) 형식: key·ownerId·carName을 모임 목록으로 옮긴다 */
+    private fun migrate() {
+        val old = device.getString("key", null) ?: return
+        if (device.contains("memberships")) { device.edit().remove("key").apply(); return }
+        val m = Membership(old, "", device.getString("ownerId", null), device.getString("carName", "")!!)
+        device.edit().remove("key").remove("ownerId").remove("carName").apply()
+        saveMemberships(listOf(m))
+    }
+
+    /** 지금 관리하는 모임 */
+    var activeCircleId: String?
+        get() = device.getString("activeCircle", null)
+        set(v) = device.edit().putString("activeCircle", v).apply()
+
+    val active: Membership? get() = memberships.let { list -> list.firstOrNull { it.circleId == activeCircleId } ?: list.firstOrNull() }
+
+    private fun updateActive(f: (Membership) -> Membership) {
+        val a = active ?: return
+        saveMemberships(memberships.map { if (it.key == a.key) f(it) else it })
+    }
+
+    /** 지금 관리하는 모임의 열쇠. 없으면 아직 어느 모임에도 들어가지 않은 차다. */
+    val deviceKey: String? get() = active?.key
+    /** 지금 관리하는 모임에서 이 차 이름 ("아버지 그랜저") */
+    var carName: String
+        get() = active?.carName.orEmpty()
+        set(v) = updateActive { it.copy(carName = v) }
+
+    fun ownerOf(circleId: String): String? = memberships.firstOrNull { it.circleId == circleId }?.ownerId
+    fun keyOf(circleId: String): String? = memberships.firstOrNull { it.circleId == circleId }?.key
+
+    /** 예전 형식에서 옮겨 온 연결에 모임 id를 채운다 */
+    fun setCircleId(key: String, circleId: String) {
+        val list = memberships
+        if (list.none { it.key == key && it.circleId != circleId }) return
+        saveMemberships(list.map { if (it.key == key) it.copy(circleId = circleId) else it })
+        if (activeCircleId == null) activeCircleId = circleId
+    }
+
+    /** 서버가 알려 준 그 모임의 차 주인·이름 */
+    fun syncMembership(key: String, ownerId: String?, carName: String?) =
+        saveMemberships(memberships.map { if (it.key == key) it.copy(ownerId = ownerId, carName = carName ?: it.carName) else it })
+
+    /** 모임에 들어갔다. 같은 모임이면 예전 연결을 바꾼다. 들어간 모임을 관리하는 모임으로 한다. */
+    fun savePairing(key: String, circleId: String, carName: String, ownerId: String?) {
+        saveMemberships(memberships.filter { it.circleId != circleId } + Membership(key, circleId, ownerId, carName))
+        activeCircleId = circleId
+    }
+
+    /** 모임 하나에서 빠졌다 (연결 끊기·모임 지우기·서버가 열쇠를 모름). 남은 연결 수 */
+    fun removeMembership(key: String): Int {
+        val left = memberships.filter { it.key != key }
+        saveMemberships(left)
+        if (left.none { it.circleId == activeCircleId }) activeCircleId = left.firstOrNull()?.circleId
+        return left.size
+    }
+
+    /** 모든 모임에서 빠졌다: 이 차에 저장된 기록을 모두 지운다 (설정은 남긴다) */
+    fun clearPairing() {
+        device.edit().remove("key").remove("carName").remove("ownerId").remove("memberships").remove("activeCircle").remove("found").apply()
+        val keep = theme
+        prefs.edit().clear().putString("theme", keep).apply()
+    }
+
+    /** 메인 지도에서 가린 모임·사람 (이 차 안에만) */
+    var hiddenCircles: Set<String>
+        get() = device.getStringSet("hiddenCircles", emptySet())!!
+        set(v) = device.edit().putStringSet("hiddenCircles", v).apply()
+    var hiddenMembers: Set<String>
+        get() = device.getStringSet("hiddenMembers", emptySet())!!
+        set(v) = device.edit().putStringSet("hiddenMembers", v).apply()
+
+    /** 차 고유번호를 못 읽을 때 대신 쓰는, 이 앱 설치에만 있는 번호 */
+    val installId: String
+        get() = device.getString("installId", null) ?: java.util.UUID.randomUUID().toString().also { device.edit().putString("installId", it).apply() }
 
     /** isPlace=false면 placeName은 "비 오는 날" 같은 조건 이름 */
     data class HeardItem(val messageId: String, val authorName: String, val placeName: String, val isPlace: Boolean = true)
@@ -17,10 +117,18 @@ class TripStore(context: Context) {
 
     // 설정 ------------------------------------------------------------
 
-    /** 오늘 운전하는 사람. 날짜가 바뀌면 다시 고른다. */
+    /**
+     * 지금 관리하는 모임에서 이 차의 주인(이 차를 타는 사람). 날짜가 바뀌어도 그대로다. 다른 모임의 주인은 ownerOf.
+     * 차 한 대 = 한 사람: 이 사람에게 온 메시지를 들려주고, 이 사람이 남긴 메시지는 틀지 않는다.
+     */
     var driverId: String?
-        get() = if (prefs.getString("driverDate", null) == today) prefs.getString("driverId", null) else null
-        set(v) = prefs.edit().putString("driverId", v).putString("driverDate", today).apply()
+        get() = active?.ownerId
+        set(v) = updateActive { it.copy(ownerId = v) }
+
+    /** 옆자리에 누가 있으면 바로 틀지 않고 먼저 물어본다 (기본 켬) */
+    var askWithPassenger: Boolean
+        get() = prefs.getBoolean("askWithPassenger", true)
+        set(v) = prefs.edit().putBoolean("askWithPassenger", v).apply()
 
     // 일기 공유 항목. 기본값은 모두 "공유 안 함".
     var shareDistance: Boolean
@@ -48,6 +156,11 @@ class TripStore(context: Context) {
         get() = prefs.getBoolean("autoHeard", true)
         set(v) = prefs.edit().putBoolean("autoHeard", v).apply()
 
+    /** 화면 밝기: auto 차 설정(주간·야간) 따르기 · day 밝게 · night 어둡게 */
+    var theme: String
+        get() = prefs.getString("theme", "auto")!!
+        set(v) = prefs.edit().putString("theme", v).apply()
+
     /** 아직 안 들은 대기 메시지. 앱이 꺼졌다 켜져도 잃어버리지 않게 저장한다. */
     var pendingIds: List<String>
         get() { resetIfNewDay(); return prefs.getString("pendingIds", "")!!.split(",").filter { it.isNotBlank() } }
@@ -66,7 +179,8 @@ class TripStore(context: Context) {
                 putBoolean("shareDistance", shareDistance); putBoolean("shareRests", shareRests)
                 putBoolean("shareHeard", shareHeard); putBoolean("shareWeather", shareWeather)
                 putBoolean("acceptTts", acceptTts); putBoolean("autoHeard", autoHeard)
-                driverId?.let { putString("driverId", it); putString("driverDate", today) }
+                putBoolean("askWithPassenger", askWithPassenger)
+                putString("theme", theme)
                 putString("tripDate", today)
             }.apply()
         }
@@ -103,12 +217,16 @@ class TripStore(context: Context) {
     }
     val rests: Int get() { resetIfNewDay(); return prefs.getInt("rests", 0) }
 
-    /** 근처를 지나서 받은 메시지(아직 안 들었을 수 있음). 같은 메시지는 하루 한 번. */
-    fun markDelivered(messageId: String): Boolean {
+    /**
+     * 근처를 지나서 받은 메시지(아직 안 들었을 수 있음). 같은 메시지는 운전자마다 하루 한 번.
+     * 가족이 한 차를 번갈아 타므로 차 하나에 한 번이 아니라 사람마다 센다.
+     */
+    fun markDelivered(messageId: String, driverId: String): Boolean {
         resetIfNewDay()
+        val key = "$driverId|$messageId"
         val set = prefs.getStringSet("delivered", emptySet())!!
-        if (messageId in set) return false
-        prefs.edit().putStringSet("delivered", set + messageId).apply()
+        if (key in set) return false
+        prefs.edit().putStringSet("delivered", set + key).apply()
         return true
     }
 
@@ -119,6 +237,23 @@ class TripStore(context: Context) {
         if (messageId !in set) prefs.edit().putStringSet("noAutoHeard", set + messageId).apply()
     }
     fun isNoAutoHeard(messageId: String): Boolean { resetIfNewDay(); return messageId in prefs.getStringSet("noAutoHeard", emptySet())!! }
+
+    /**
+     * 지도에 찍을 "발견한 곳": 들은 메시지 id → 이 차가 그때 있던 자리.
+     * 장소 메시지는 메시지 좌표를 쓰므로, 비·밤길 같은 조건 메시지를 들은 자리만 쓴다.
+     * 이 차 안에만 두고 서버에는 보내지 않는다. 날짜가 바뀌어도 남긴다.
+     */
+    data class Found(val messageId: String, val lat: Double, val lon: Double, val date: String)
+
+    fun addFound(messageId: String, lat: Double, lon: Double) {
+        val list = found.filter { it.messageId != messageId } + Found(messageId, lat, lon, today)
+        device.edit().putString("found", list.joinToString("\n") { "${it.messageId}\t${it.lat}\t${it.lon}\t${it.date}" }).apply()
+    }
+    val found: List<Found>
+        get() = device.getString("found", "")!!.lines().filter { it.isNotBlank() }.mapNotNull {
+            val p = it.split("\t")
+            runCatching { Found(p[0], p[1].toDouble(), p[2].toDouble(), p.getOrElse(3) { "" }) }.getOrNull()
+        }
 
     fun addHeard(item: HeardItem) {
         resetIfNewDay()

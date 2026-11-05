@@ -14,6 +14,7 @@ object Engine : CarSignals.Listener {
     /** 화면이 열려 있을 때만 붙는다 */
     interface Ui {
         fun changed()
+        /** 이 차의 주인이 정해지지 않았다 (폰에서 주인 없이 남은 차) */
         fun onNeedDriver()
         /** 출발·후진 등 P가 아닌 기어. toNavi=true(D)면 기본 내비 화면으로 */
         fun onDriving(toNavi: Boolean)
@@ -35,9 +36,19 @@ object Engine : CarSignals.Listener {
     private lateinit var car: CarSignals
     private lateinit var player: Player
 
-    var circle: Circle? = null
+    /** 이 차가 들어간 모든 모임 (id → 모임) */
+    val circles = LinkedHashMap<String, Circle>()
+    /** 지금 관리하는 모임 (설정·모임 관리·남기기가 다룬다). 바뀐 모임을 넣으면 목록도 고친다. */
+    var circle: Circle?
+        get() = store.active?.circleId?.let { circles[it] }
+        set(v) { if (v != null) circles[v.id] = v }
+    /** 모든 모임의 메시지 (지도·근처 계산·재생은 모임을 가리지 않는다) */
     var messages: List<PlaceMessage> = emptyList()
         private set
+    private val messagesByKey = HashMap<String, List<PlaceMessage>>()
+    private val heardByKey = HashMap<String, List<Api.Heard>>()
+    /** 처음 메시지 목록을 받은 연결. 모두 받기 전에는 저장된 대기열을 덮어쓰지 않는다. */
+    private val loadedKeys = mutableSetOf<String>()
     var serverOk = false
         private set
     /** 지금 기어. 시동 직후 모르면 null */
@@ -69,6 +80,23 @@ object Engine : CarSignals.Listener {
         private set
     var feedDiaries: List<Api.Diary> = emptyList()
         private set
+    /** 이 차가 아직 모임에 들어가지 않았다. 화면은 「새 모임 만들기 / 초대 코드로 들어가기」를 보여 준다. */
+    var needPairing = false
+        private set
+    /** 모임을 만들거나 들어가는 중 (버튼을 두 번 누르지 않게) */
+    var setupBusy = false
+        private set
+    /** 차 고유번호(VIN)의 해시. 서버는 같은 차가 두 번 들어오면 예전 연결을 끊는다. 원래 번호는 보내지 않는다. */
+    private var vinHash: String? = null
+    /** 옆자리에 누가 있어 들을지 묻는 중. 화면은 보낸 사람을 보이지 않고 「지금 듣기 / 다음에」만 묻는다. */
+    var askingPassenger = false
+        private set
+    /** 동승 중에 「지금 듣기」를 골랐다. 옆자리가 비면 다시 묻는다. */
+    private var passengerOk = false
+    /** 동승 중에 「다음에」를 골랐다. 옆자리가 비거나 직접 「지금 듣기」를 누를 때까지 틀지 않는다. */
+    private var passengerLater = false
+    /** 「오늘 온 메시지 모아 듣기」로 다시 듣는 것. 「들었어요」를 또 보내지 않고 끝나면 저절로 넘어간다. */
+    private val replayIds = mutableSetOf<String>()
 
     fun start(context: Context) {
         if (started) return
@@ -78,7 +106,11 @@ object Engine : CarSignals.Listener {
         player = Player(app)
         car = CarSignals(app, this)
         car.start()
-        refreshFromServer()
+        Api.key = store.deviceKey
+        Api.onUnauthorized = ::dropKey
+        if (Api.key == null) beginPairing() else refreshFromServer()
+        // 다른 모임에 더 들어갈 때도 차 고유번호(해시)를 쓴다
+        main.postDelayed({ car.readVin { vin -> if (vinHash == null) useVin(vin) } }, 2000)
     }
 
     fun stop() {
@@ -90,50 +122,242 @@ object Engine : CarSignals.Listener {
     }
 
     private fun changed() {
-        if (pendingRestored) store.pendingIds = (listOfNotNull(playing) + pending + skipped).map { it.id }.distinct()
+        if (pendingRestored) store.pendingIds = (listOfNotNull(playing) + pending + skipped).map { it.id }.filter { it !in replayIds }.distinct()
         ui?.changed()
         Notifier.updateStatus()
     }
 
     // 서버 ------------------------------------------------------------
 
+    // 모임 들어가기 (로그인 없음: 모임을 만들거나 초대 코드를 넣는다) --------------------
+
+    private fun beginPairing() {
+        needPairing = true
+        setupBusy = false
+        circles.clear(); messagesByKey.clear(); heardByKey.clear(); loadedKeys.clear()
+        messages = emptyList(); feedHeard = emptyList(); pending.clear(); skipped.clear()
+        main.removeCallbacks(refreshTask)
+        changed()
+        // Vehicle 서비스가 붙을 시간을 준 뒤 고유번호를 읽는다. 시동 직후엔 답이 아예 안 올 때가 있어 4초 뒤엔 설치 번호로 간다.
+        main.postDelayed({
+            main.postDelayed({ if (vinHash == null) useVin(null) }, 4000)
+            car.readVin { vin -> if (vinHash == null) useVin(vin) }
+        }, 2000)
+    }
+
+    private fun useVin(vin: String?) {
+        Log.d("차 고유번호 ${if (vin != null) "읽음" else "못 읽어 설치 번호 사용"}")
+        vinHash = sha256("gilwi-car:" + (vin ?: store.installId))
+    }
+
+    /** 새 모임 만들기 (이미 다른 모임에 있어도 하나 더). 만든 사람이 이 차의 주인이 된다. 실패하면 오류 문구 */
+    fun createCircle(circleName: String, type: String, myName: String, title: String, color: String, done: (String?) -> Unit) {
+        if (vinHash == null) useVin(null)
+        setupBusy = true; changed()
+        Api.createCircle(circleName, type, myName, title, color, vinHash!!) { r, err -> joined(r, err, done) }
+    }
+
+    /** 초대 코드로 들어가기. 들어간 뒤 홈에서 「나는 누구」를 고른다. */
+    fun joinCircle(code: String, done: (String?) -> Unit) {
+        if (vinHash == null) useVin(null)
+        setupBusy = true; changed()
+        Api.joinCircle(code, vinHash!!) { r, err -> joined(r, err, done) }
+    }
+
+    private fun joined(r: Api.Joined?, err: String?, done: (String?) -> Unit) {
+        setupBusy = false
+        if (r == null) { serverOk = err != null; changed(); done(err ?: "서버에 연결하지 못했어요"); return }
+        Log.d("모임에 들어감: ${r.circle.name} (${r.carName})")
+        serverOk = true
+        // 다른 모임에 이미 들어가 있으면 대기열은 그대로 두고 모임만 더한다
+        if (needPairing) pendingRestored = false
+        store.savePairing(r.key, r.circle.id, r.carName, r.memberId)
+        Api.key = r.key
+        circles[r.circle.id] = r.circle
+        needPairing = false
+        refreshFromServer()
+        done(null)
+    }
+
+    /** 관리하는 모임 바꾸기 (설정의 「모임 바꾸기」). 지도·재생은 그대로 모든 모임을 쓴다. */
+    fun switchCircle(circleId: String) {
+        if (store.keyOf(circleId) == null) return
+        store.activeCircleId = circleId
+        Api.key = store.deviceKey
+        Log.d("관리하는 모임: ${circles[circleId]?.name}")
+        changed()
+        loadFeed()
+    }
+
+    /**
+     * 서버가 그 열쇠를 모른다(모임에서 이 차를 뺐거나 모임이 지워짐) 또는 이 차가 연결을 끊었다: 그 모임만 뺀다.
+     * 남은 모임이 없으면 처음 화면으로 돌아간다.
+     */
+    private fun dropKey(key: String) {
+        if (needPairing) return
+        val gone = store.memberships.firstOrNull { it.key == key } ?: return
+        Log.d("모임에서 빠짐: ${circles[gone.circleId]?.name ?: gone.circleId}")
+        val left = store.removeMembership(key)
+        if (left == 0) { unpairedAll(); return }
+        circles.remove(gone.circleId); messagesByKey.remove(key); heardByKey.remove(key); loadedKeys.remove(key)
+        rebuildMessages(); rebuildHeard()
+        if (playing?.circleId == gone.circleId) { player.stop(); playing = null; Notifier.clearPlaying(); ui?.onPlaybackEnd() }
+        pending.removeAll { it.circleId == gone.circleId }; skipped.removeAll { it.circleId == gone.circleId }
+        Api.key = store.deviceKey
+        changed()
+    }
+
+    /** 모든 모임에서 빠졌다: 처음부터 다시 연결 */
+    private fun unpairedAll() {
+        Log.d("들어간 모임이 없어 처음 화면으로")
+        store.clearPairing()
+        Api.key = null
+        player.stop()
+        playing = null
+        beginPairing()
+    }
+
+    /** 설정의 「이 차 연결 끊기」: 지금 관리하는 모임에서만 빠진다 */
+    fun unlink(done: (Boolean) -> Unit) {
+        val key = Api.key ?: return done(false)
+        Api.unlinkCar { ok ->
+            if (ok) dropKey(key)
+            done(ok)
+        }
+    }
+
+    /** 모임 통째로 지우기. 이 차의 그 모임 열쇠도 함께 없어진다. 실패하면 오류 문구 */
+    fun deleteCircle(done: (String?) -> Unit) {
+        val name = circle?.name ?: return done("모임을 불러오지 못했어요")
+        val key = Api.key ?: return done("모임을 불러오지 못했어요")
+        Api.deleteCircle(name) { err ->
+            if (err == null) dropKey(key)
+            done(err)
+        }
+    }
+
+    fun renameCar(name: String, done: (Boolean) -> Unit) = Api.renameCar(name) { ok ->
+        if (ok) store.carName = name
+        done(ok)
+        changed()
+    }
+
+    private fun sha256(s: String) = java.security.MessageDigest.getInstance("SHA-256").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
+
+    // 서버 (연결된 뒤) ---------------------------------------------------
+
+    private val refreshTask = Runnable { refreshFromServer() }
+
     private fun refreshFromServer() {
-        val circleId = BuildConfig.CIRCLE_ID
-        Api.loadCircle(circleId) { c ->
-            serverOk = c != null
-            if (c != null) circle = c
-            changed()
-            // 시동 직후엔 네트워크가 늦게 붙으므로 실패하면 금방 다시 시도한다
-            main.postDelayed(::refreshFromServer, if (c != null) REFRESH_MS else RETRY_MS)
+        if (needPairing) return
+        main.removeCallbacks(refreshTask)
+        val list = store.memberships
+        var answered = 0
+        var okAny = false
+        list.forEach { ms ->
+            Api.loadCircle(CIRCLE, ms.key) { c ->
+                if (c != null) {
+                    okAny = true
+                    circles[c.id] = c
+                    store.setCircleId(ms.key, c.id)
+                }
+                if (++answered < list.size) return@loadCircle
+                serverOk = okAny
+                // 빠진 모임은 목록에서도 뺀다
+                val ids = store.memberships.map { it.circleId }.toSet()
+                circles.keys.retainAll(ids)
+                changed()
+                // 시동 직후엔 네트워크가 늦게 붙으므로 실패하면 금방 다시 시도한다
+                if (!needPairing) main.postDelayed(refreshTask, if (okAny) REFRESH_MS else RETRY_MS)
+            }
+            // 폰이나 다른 차에서 이 차 주인·이름을 바꿨을 수 있다
+            Api.me(ms.key) { owner, name, ok ->
+                if (!ok) return@me
+                val prev = store.memberships.firstOrNull { it.key == ms.key } ?: return@me
+                store.syncMembership(ms.key, owner, name)
+                if (owner == prev.ownerId) return@me
+                Log.d("차 주인 바뀜 (${circles[prev.circleId]?.name}): $owner")
+                if (ms.key == store.deviceKey) setDriver(owner)
+                else { if (owner != null) pending.removeAll { it.authorId == owner }; changed() }
+            }
         }
         refreshMessages()
         loadFeed()
     }
 
-    fun refreshMessages() = Api.loadMessages(BuildConfig.CIRCLE_ID) { list ->
-        if (list != null) {
-            messages = list
-            // 그사이 신고로 숨겨졌거나 지워진 메시지는 대기열에서도 뺀다
-            val ids = list.map { it.id }.toSet()
-            pending.removeAll { it.id !in ids }
-            skipped.removeAll { it.id !in ids }
-            if (!pendingRestored) {
-                pendingRestored = true
+    fun refreshMessages() = store.memberships.forEach { ms ->
+        Api.loadMessages(CIRCLE, ms.key) { list ->
+            if (list != null) {
+                // 서버가 모임을 안 붙여 보내도 어느 모임 것인지 안다
+                messagesByKey[ms.key] = list.map { if (it.circleId.isEmpty()) it.copy(circleId = ms.circleId) else it }
+                loadedKeys += ms.key
+                rebuildMessages()
+                // 그사이 신고로 숨겨졌거나 지워진 메시지는 대기열에서도 뺀다
+                val ids = messages.map { it.id }.toSet()
+                pending.removeAll { it.id !in ids }
+                skipped.removeAll { it.id !in ids }
                 // 앱이 꺼졌다 켜져도 오늘 받은 메시지를 잃지 않게 (「보내지 않기」한 것은 들은 것으로 쳐서 빼고)
-                store.pendingIds.filter { !store.isNoAutoHeard(it) }
-                    .mapNotNull { id -> list.firstOrNull { it.id == id } }.forEach { if (it !in pending) pending.add(it) }
+                if (!pendingRestored) {
+                    store.pendingIds.filter { !store.isNoAutoHeard(it) }
+                        .mapNotNull { id -> messages.firstOrNull { it.id == id } }
+                        .forEach { if (it !in pending && it.id != playing?.id) pending.add(it) }
+                    if (store.memberships.all { it.key in loadedKeys }) pendingRestored = true
+                }
+                lastLoc?.let { matchNearby(it.first, it.second) }
+                matchCarState()
             }
-            lastLoc?.let { matchNearby(it.first, it.second) }
-            matchCarState()
+            changed()
         }
-        changed()
     }
 
-    fun loadFeed() = Api.loadFeed(BuildConfig.CIRCLE_ID) { h, d ->
-        if (h != null) feedHeard = h.sortedByDescending { it.at }
-        if (d != null) feedDiaries = d.sortedByDescending { it.date }
-        ui?.changed()
+    private fun rebuildMessages() {
+        messages = store.memberships.flatMap { messagesByKey[it.key].orEmpty() }
     }
+
+    /** 「들었어요」 기록은 모든 모임 것을 모은다 (지도의 찾은 수). 일기는 지금 관리하는 모임 것만 (소식 화면). */
+    fun loadFeed() = store.memberships.forEach { ms ->
+        Api.loadFeed(CIRCLE, ms.key) { h, d ->
+            if (h != null) {
+                heardByKey[ms.key] = h
+                rebuildHeard()
+                dropHeardElsewhere()
+            }
+            if (d != null && ms.key == store.deviceKey) feedDiaries = d.sortedByDescending { it.date }
+            ui?.changed()
+        }
+    }
+
+    private fun rebuildHeard() {
+        feedHeard = store.memberships.flatMap { heardByKey[it.key].orEmpty() }.sortedByDescending { it.at }
+    }
+
+    /** 이 메시지가 속한 모임에서 이 차의 주인 */
+    fun ownerOf(m: PlaceMessage): String? = if (m.circleId.isEmpty()) store.driverId else store.ownerOf(m.circleId)
+    /** 이 메시지가 속한 모임의 열쇠 */
+    private fun keyOf(m: PlaceMessage): String? = store.keyOf(m.circleId) ?: Api.key
+
+    /**
+     * 가족 차가 여러 대면 같은 사람이 오늘 다른 차에서 이미 들었을 수 있다.
+     * "하루 한 번"은 차마다 따로 기억하므로, 서버의 「들었어요」 기록(마지막으로 들은 때)으로 한 번 더 거른다.
+     */
+    private fun heardElsewhereToday(m: PlaceMessage): Boolean {
+        val driver = ownerOf(m) ?: return false
+        return feedHeard.any { it.messageId == m.id && it.memberId == driver && localDate(it.lastAt) == store.today }
+    }
+
+    /** 대기열에 있던 메시지를 다른 차에서 이미 들었으면 뺀다 (재생 중인 것은 그대로) */
+    private fun dropHeardElsewhere() {
+        val gone = pending.filter(::heardElsewhereToday)
+        if (gone.isEmpty()) return
+        Log.d("다른 차에서 이미 들음: ${gone.joinToString { it.id }}")
+        pending.removeAll(gone.toSet())
+        changed() // 저장된 대기열과 상태 알림도 고친다
+    }
+
+    /** "2026-11-04T01:30:00Z" → 이 차 시간대의 "2026-11-04" */
+    private fun localDate(iso: String): String? = runCatching {
+        java.time.Instant.parse(iso).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toString()
+    }.getOrNull()
 
     fun uploadDiary() {
         val driver = store.driverId ?: return
@@ -142,11 +366,18 @@ object Engine : CarSignals.Listener {
         Api.sendDiary(c.id, driver, store.today, store.diary(full = false, circleType = c.type)) { ok -> Log.d("일기 업로드: $ok") }
     }
 
-    // 운전자 ------------------------------------------------------------
+    // 차 주인 ------------------------------------------------------------
+
+    /** 설정의 「차 주인 바꾸기」: 서버에도 알린다 */
+    fun setOwner(id: String, done: (Boolean) -> Unit) = Api.setOwner(id) { name ->
+        if (name != null) { store.carName = name; setDriver(id) }
+        done(name != null)
+    }
 
     fun setDriver(id: String?) {
         store.driverId = id
         if (id != null) pending.removeAll { it.authorId == id }
+        dropHeardElsewhere()
         Notifier.clearNeedDriver()
         changed()
         maybeAutoPlay()
@@ -178,6 +409,7 @@ object Engine : CarSignals.Listener {
                 maybeAutoPlay()
             }
         } else {
+            askingPassenger = false
             // 끝까지 듣고 출발했으면 「들었어요」로 본다
             if (autoHeardMsg != null && autoHeardMsg?.id == playing?.id) heard()
             // 운전을 시작하면 재생을 멈추고 대기열로 돌려놓는다
@@ -187,6 +419,7 @@ object Engine : CarSignals.Listener {
                 if (!store.isNoAutoHeard(it.id)) pending.add(0, it)
                 playing = null
                 pending.addAll(skipped); skipped.clear()
+                dropReplays()
                 Notifier.clearPlaying()
             }
             // 후진(R)일 땐 후방 카메라를 가리지 않게 내비를 띄우지 않는다
@@ -234,6 +467,11 @@ object Engine : CarSignals.Listener {
         if (occupied == passengerNow) return
         passengerNow = occupied
         Log.d("조수석 탑승 $occupied")
+        if (!occupied) {
+            // 옆자리가 비었으니 미뤄 둔 메시지를 들려준다
+            passengerOk = false; passengerLater = false; askingPassenger = false
+            main.post { maybeAutoPlay() }
+        }
         recordDriveConditions()
         matchCarState()
         changed()
@@ -271,21 +509,24 @@ object Engine : CarSignals.Listener {
         })
     }
 
-    /** 조건이 맞은 메시지를 대기열에 넣는다. 같은 메시지는 하루 한 번. */
+    /** 조건이 맞은 메시지를 대기열에 넣는다. 같은 메시지는 하루 한 번. 내가 남긴 것인지는 그 메시지 모임의 주인으로 본다. */
     private fun deliver(candidates: List<PlaceMessage>) {
-        val driver = store.driverId
         val added = mutableListOf<PlaceMessage>()
         for (m in candidates) {
+            val driver = ownerOf(m)
             if (m.authorId == driver) continue
             if (m.kind == "text" && !store.acceptTts) continue
-            if (!store.markDelivered(m.id)) continue
+            if (m in pending || m.id == playing?.id) continue
+            if (heardElsewhereToday(m)) continue // 오늘 다른 차에서 이미 들음
+            if (!store.markDelivered(m.id, driver ?: "")) continue
             Log.d("메시지 열림: ${m.placeName} (${m.authorName}) [${m.opensOn}]")
             pending.add(m)
             added += m
         }
         if (added.isEmpty()) return
         // 운전 중에는 알림음과 한 줄만. 본문은 차를 세우면 들려준다.
-        if (parked != true) Notifier.arrived(added.last(), pending.size) else maybeAutoPlay()
+        // 옆자리에 누가 있으면 알림에도 보낸 사람을 쓰지 않는다
+        if (parked != true) Notifier.arrived(added.last(), pending.size, discreet = passengerNow && store.askWithPassenger) else maybeAutoPlay()
     }
 
     /** 들러 가기: 지금 메시지의 장소를 내비 경유지로 */
@@ -297,12 +538,59 @@ object Engine : CarSignals.Listener {
     fun maybeAutoPlay() {
         if (parked != true || store.driverId == null || pending.isEmpty() || playing != null) return
         if (uiVisible && uiBusy) return
+        if (needsPassengerOk()) {
+            if (passengerLater || askingPassenger) return
+            // 옆자리에 누가 있으면 바로 틀지 않고 묻는다. 누가 보냈는지는 말하지 않는다.
+            askingPassenger = true
+            Log.d("동승 중: 들을지 묻기")
+            if (!uiVisible) Notifier.bringToFront()
+            changed()
+            player.speak("메시지가 도착했어요. 지금 들으시려면 화면의 「지금 듣기」를 눌러 주세요") {}
+            return
+        }
         if (!uiVisible) Notifier.bringToFront()
         startPlayback(announce = true)
     }
 
+    /** 「옆자리에 누가 탄 날」 메시지는 함께 들으라고 남긴 것이라 묻지 않는다 */
+    private fun needsPassengerOk() = passengerNow && store.askWithPassenger && !passengerOk && pending.any { it.opensOn != "together" }
+
+    /** 동승 중 묻기에 「다음에 들을게요」 */
+    fun passengerLater() {
+        askingPassenger = false
+        passengerLater = true
+        player.stop()
+        changed()
+    }
+
+    /** 오늘 들은 메시지를 다시 모아 듣는다. 아직 안 들은 것이 있으면 그것부터. */
+    fun playToday() {
+        val ids = store.heard.map { it.messageId }
+        val again = ids.mapNotNull { id -> messages.firstOrNull { it.id == id } }.filter { it !in pending && it.id != playing?.id }
+        replayIds += again.map { it.id }
+        pending.addAll(again)
+        startPlayback(announce = false)
+    }
+
+    /** 지도·목록에서 고른 메시지 하나를 다시 듣는다 (「들었어요」는 또 보내지 않는다) */
+    fun replay(m: PlaceMessage) {
+        if (parked != true) return
+        playing?.let { player.stop(); if (it.id !in replayIds) pending.add(0, it); playing = null }
+        replayIds += m.id
+        pending.remove(m)
+        pending.add(0, m)
+        startPlayback(announce = false)
+    }
+
+    private fun dropReplays() {
+        pending.removeAll { it.id in replayIds }
+        replayIds.clear()
+    }
+
     fun startPlayback(announce: Boolean) {
         if (pending.isEmpty() || parked != true) return
+        askingPassenger = false
+        if (passengerNow) passengerOk = true // 직접 들으려고 했다
         val first = pending.removeAt(0)
         playing = first
         val count = pending.size + 1
@@ -320,7 +608,7 @@ object Engine : CarSignals.Listener {
     fun playCurrent() {
         val m = playing ?: return
         stopAutoHeard()
-        playState = if (m.kind == "voice") "${m.authorName}님의 목소리" else "${m.authorName}님의 글 (기계음)"
+        playState = (if (m.kind == "voice") "${m.authorName}님의 목소리" else "${m.authorName}님의 글 (기계음)") + if (m.id in replayIds) " · 다시 듣기" else ""
         Notifier.playing(m, playState)
         changed()
         player.play(m) { ok ->
@@ -328,6 +616,8 @@ object Engine : CarSignals.Listener {
             playState = if (ok) "다 들었어요" else if (m.kind == "voice") "재생하지 못했어요" else "기계음을 쓸 수 없어 글로 보여 드려요"
             Notifier.playing(m, playState)
             changed()
+            // 다시 듣기는 이미 알린 것이라 잠시 뒤 다음으로 넘어간다
+            if (m.id in replayIds) { main.postDelayed({ if (playing?.id == m.id) next(skip = false) }, REPLAY_GAP_MS); return@play }
             // 운전자가 버튼을 누르지 않아도 되게: 끝까지 들었으면(글은 화면에 보였으면) 잠시 뒤 「들었어요」를 보낸다
             if (ok || m.kind == "text") startAutoHeard(m, if (ok) AUTO_HEARD_SEC else AUTO_HEARD_TEXT_SEC)
         }
@@ -389,8 +679,11 @@ object Engine : CarSignals.Listener {
     fun heard() {
         stopAutoHeard()
         val m = playing ?: return
-        val driver = store.driverId ?: return
-        Api.sendHeard(m.id, driver) { loadFeed() }
+        if (m.id in replayIds) { next(skip = false); return }
+        val driver = ownerOf(m) ?: return
+        Api.sendHeard(m.id, driver, keyOf(m)) { loadFeed() }
+        // 지도의 「발견한 곳」: 들은 자리를 이 차 안에만 남긴다
+        lastLoc?.let { store.addFound(m.id, it.first, it.second) }
         store.addHeard(TripStore.HeardItem(m.id, m.authorName, m.placeName, m.isPlace))
         uploadDiary()
         next(skip = false)
@@ -398,7 +691,7 @@ object Engine : CarSignals.Listener {
 
     fun report() {
         val m = playing ?: return
-        Api.report(m.id, store.driverId ?: "unknown") { ok -> if (ok) Log.d("신고됨 ${m.id}") }
+        Api.report(m.id, ownerOf(m) ?: "unknown", keyOf(m)) { ok -> if (ok) Log.d("신고됨 ${m.id}") }
         messages = messages.filter { it.id != m.id }
         next(skip = false)
     }
@@ -407,7 +700,7 @@ object Engine : CarSignals.Listener {
     fun next(skip: Boolean = true) {
         stopAutoHeard()
         player.stop()
-        playing?.let { if (skip) skipped += it }
+        playing?.let { if (skip && it.id !in replayIds) skipped += it }
         playing = null
         if (pending.isNotEmpty() && parked == true) startPlayback(announce = false) else endPlayback()
     }
@@ -416,20 +709,24 @@ object Engine : CarSignals.Listener {
     fun later() {
         stopAutoHeard()
         player.stop()
-        playing?.let { pending.add(0, it) }
+        playing?.let { if (it.id !in replayIds) pending.add(0, it) }
         playing = null
         endPlayback()
     }
 
     private fun endPlayback() {
         pending.addAll(skipped); skipped.clear()
+        dropReplays()
         Notifier.clearPlaying()
         ui?.onPlaybackEnd()
         changed()
     }
 
+    /** 서버는 열쇠로 모임을 정하므로 주소에는 "me"를 쓴다 */
+    private const val CIRCLE = "me"
     private const val REFRESH_MS = 30_000L
     private const val RETRY_MS = 5_000L
     private const val AUTO_HEARD_SEC = 5
     private const val AUTO_HEARD_TEXT_SEC = 10
+    private const val REPLAY_GAP_MS = 2_000L
 }

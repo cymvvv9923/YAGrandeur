@@ -68,11 +68,15 @@ object Notifier {
         nm.notify(STATUS_ID, status())
     }
 
-    /** 운전 중 근처를 지났을 때: 소리 한 번과 한 줄. */
-    fun arrived(m: PlaceMessage, total: Int) {
+    /** 운전 중 근처를 지났을 때: 소리 한 번과 한 줄. discreet=true(옆자리에 누가 있음)면 누가 보냈는지 쓰지 않는다. */
+    fun arrived(m: PlaceMessage, total: Int, discreet: Boolean = false) {
         if (!ready) return
         nm.notify(MESSAGE_ID, builder(CH_MESSAGE)
-            .setContentTitle(if (m.isPlace) "${m.placeName}에 ${m.authorName}님의 메시지가 있어요" else "「${m.placeName}」 ${m.authorName}님의 메시지가 열렸어요")
+            .setContentTitle(when {
+                discreet -> "메시지가 도착했어요"
+                m.isPlace -> "${m.placeName}에 ${m.authorName}님의 메시지가 있어요"
+                else -> "「${m.placeName}」 ${m.authorName}님의 메시지가 열렸어요"
+            })
             .setContentText(if (total > 1) "받은 메시지 ${total}개 · 차를 세우면 들려드릴게요" else "차를 세우면 들려드릴게요")
             .setCategory(Notification.CATEGORY_MESSAGE)
             .setAutoCancel(true)
@@ -100,7 +104,7 @@ object Notifier {
 
     fun needDriver() {
         if (!ready) return
-        nm.notify(DRIVER_ID, builder(CH_MESSAGE).setContentTitle("오늘 누가 운전하세요?").setContentText("눌러서 운전자를 골라 주세요")
+        nm.notify(DRIVER_ID, builder(CH_MESSAGE).setContentTitle("이 차는 누구 차인가요?").setContentText("눌러서 차 주인을 골라 주세요")
             .setContentIntent(openApp(auto = true)).setAutoCancel(true).build())
     }
 

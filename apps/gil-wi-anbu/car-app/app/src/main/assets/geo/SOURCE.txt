@@ -1,0 +1,4 @@
+행정구역 경계: 통계청(KOSTAT) 센서스용 행정구역경계 2013 간략판
+가져온 곳: https://github.com/southkorea/southkorea-maps (kostat/2013/json/*_geo_simple.json)
+라이선스: KOSTAT - Free to share or remix (자유 이용·변경 가능). 앱 지도 아래에 출처를 표기한다.
+바꾼 것: 좌표를 소수점 4자리로 줄이고 안쪽 구멍 고리를 뺐다(섬은 그대로). 시·도 이름은 짧은 이름(서울·경기…)으로 바꿨다.

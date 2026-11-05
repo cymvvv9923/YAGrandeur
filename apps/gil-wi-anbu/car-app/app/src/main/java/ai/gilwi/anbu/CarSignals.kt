@@ -113,6 +113,16 @@ class CarSignals(context: Context, private val listener: Listener) {
         override fun onFailed(p0: Exception) { Log.d("door 실패: $p0") }
     }
 
+    /** 차 고유번호(VIN). 못 읽으면 null. Vehicle 서비스가 연결된 뒤(start 후 잠시)에 부른다. */
+    fun readVin(done: (String?) -> Unit) {
+        runCatching {
+            vehicle.getCarInfo().getVINInfo(
+                { v -> main.post { done(v?.trim()?.takeIf { it.isNotEmpty() }) } },
+                { e -> Log.d("VIN 실패: $e"); main.post { done(null) } },
+            )
+        }.onFailure { Log.d("VIN 실패: $it"); done(null) }
+    }
+
     /** 메시지 장소를 경유지로 넣는다(들러 가기). 경로 안내 중일 때 의미가 있다(내비 최대 2곳). */
     fun addStopover(lat: Double, lon: Double, name: String): Boolean {
         if (!naviReady) return false

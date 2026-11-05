@@ -42,10 +42,8 @@ $route = @(
     @(37.4770, 127.0357), @(37.4740, 127.0355), @(37.4707, 127.0352)
 )
 
-function Post($body) {
-    Invoke-RestMethod -Method Post http://localhost:8090/api/circles/home/messages -ContentType 'application/json; charset=utf-8' `
-        -Body ([Text.Encoding]::UTF8.GetBytes(($body | ConvertTo-Json -Compress))) | Out-Null
-}
+. "$PSScriptRoot\family-demo.ps1"
+function Post($body) { Post-Message $phoneKey $body }
 
 & $ADB forward tcp:8088 tcp:8088 | Out-Null
 # 차를 처음 상태로: 정차, 와이퍼·전조등 끔, 조수석 비움, 문 닫힘
@@ -54,6 +52,7 @@ Car '/vehicle/body?front_wiper=Off'; Car '/vehicle/lights?feature=headlamp_mode&
 Car '/vehicle/seat?kind=occupied&area=passenger&value=false'; Car '/vehicle/body?door_fl=false'
 if ($Fresh) {
     Invoke-RestMethod -Method Post http://localhost:8090/api/dev/reset | Out-Null
+    $phoneKey = Get-PhoneKey
     # 차 상태로 열리는 메시지 (장소 메시지 2개는 시드에 있다)
     Post @{ authorId = 'yongmin';  when = 'door';     kind = 'text'; text = '아버지, 오늘도 조심히 다녀오세요' }
     Post @{ authorId = 'mom';      when = 'together'; kind = 'text'; text = '옆에 누구 태웠어요? 같이 맛있는 거 드세요' }
@@ -68,7 +67,10 @@ if ($Fresh) {
 $odo = [double](Invoke-RestMethod http://localhost:8088/vehicle/odometer).traveled_distance_km
 # 새 에뮬레이터는 0km인데, 앱은 0을 "값 없음"으로 본다. 실제 차처럼 0이 아닌 값에서 시작한다.
 if ($odo -lt 1) { $odo = 12345; Car "/vehicle/odometer?traveled_distance_km=$odo" }
-& $ADB shell am start -n "$pkg/.MainActivity" --es driver dad | Out-Null
+& $ADB shell am start --user current -n "$pkg/.MainActivity" | Out-Null
+if (-not $phoneKey) { $phoneKey = Get-PhoneKey }
+Connect-EmulatorCar $phoneKey '아버지 그랜저' 'dad'
+& $ADB shell am start --user current -n "$pkg/.MainActivity" --es driver dad | Out-Null
 Start-Sleep 6
 Loc $route[0][0] $route[0][1]; Start-Sleep 2
 '1) 강남역에서 정차 중 (기어 P)'; Shot '1_parked'
