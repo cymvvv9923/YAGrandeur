@@ -47,12 +47,29 @@ class CarSignals(context: Context, private val listener: Listener) {
         fun onPassenger(occupied: Boolean)
         /** 운전석 문이 열렸다 (닫힐 때는 부르지 않음) */
         fun onDriverDoorOpened()
+        /** 운전석 말고 누가 안전벨트를 맸는지 (동승자 판단을 좌석 센서와 함께) */
+        fun onOtherBelt(buckled: Boolean) {}
+        /** 경고등이 켜졌는지 (켜진 것 개수) */
+        fun onWarning(count: Int) {}
     }
 
     private val main = Handler(Looper.getMainLooper())
     private val vehicle = Vehicle(context)
     private val navi = NaviHelper(context.applicationContext)
     private var naviReady = false
+
+    /** 기본 내비가 알려 준 지금 주소 ("수정구 시흥동"). 주행 중 저장한 곳의 이름으로 쓴다. */
+    @Volatile var address: String? = null
+        private set
+
+    /** 기본 내비의 즐겨찾기(집·회사 등)와 최근 목적지. 남기기의 장소 고르기에 쓴다. */
+    data class NaviPlace(val name: String, val lat: Double, val lon: Double, val address: String, val kind: String)
+    var naviPlaces: List<NaviPlace> = emptyList()
+        private set
+    private var bookmarks: List<NaviPlace> = emptyList()
+    private var recents: List<NaviPlace> = emptyList()
+    /** 기본 내비에서 목적지에 도착했을 때 (이름) */
+    var onArrived: ((String) -> Unit)? = null
 
     /** 시연용 위치. 값이 있으면 내비 위치 대신 쓴다. */
     var demoLocation: Pair<Double, Double>? = null
@@ -113,6 +130,36 @@ class CarSignals(context: Context, private val listener: Listener) {
         override fun onFailed(p0: Exception) { Log.d("door 실패: $p0") }
     }
 
+    // 안전벨트 (조수석·뒷좌석)·경고등. 값이 바뀌는 알림 대신 짧게 물어본다 (지원 안 하는 차는 조용히 넘어간다)
+    private val otherSeats = listOf(SeatValue.ROW_1_RIGHT, SeatValue.ROW_2_LEFT, SeatValue.ROW_2_RIGHT).map { it to SeatArea(it) }
+    private val beltState = HashMap<SeatValue, Boolean>()
+    private var lastBelt: Boolean? = null
+    private var lastWarning = -1
+    private var safetyOk = true
+
+    private val pollSafety = object : Runnable {
+        override fun run() {
+            runCatching {
+                otherSeats.forEach { (v, a) ->
+                    vehicle.getSeat().getCurrentSeatBeltBuckledState(a, { b ->
+                        main.post {
+                            beltState[v] = b == true
+                            val any = beltState.values.any { it }
+                            if (any != lastBelt) { lastBelt = any; listener.onOtherBelt(any) }
+                        }
+                    }, { })
+                }
+            }
+            if (safetyOk) runCatching {
+                vehicle.getSafety().getTelltalesInfo({ t ->
+                    val n = runCatching { t.telltales.size }.getOrDefault(0)
+                    main.post { if (n != lastWarning) { lastWarning = n; listener.onWarning(n) } }
+                }, { e -> if (e is SecurityException) safetyOk = false })
+            }
+            main.postDelayed(this, SAFETY_POLL_MS)
+        }
+    }
+
     /** 차 고유번호(VIN). 못 읽으면 null. Vehicle 서비스가 연결된 뒤(start 후 잠시)에 부른다. */
     fun readVin(done: (String?) -> Unit) {
         runCatching {
@@ -138,8 +185,61 @@ class CarSignals(context: Context, private val listener: Listener) {
             val lat = currentLocationInfo.latitude
             val lon = currentLocationInfo.longitude
             if (lat == 0.0 && lon == 0.0) return
+            currentLocationInfo.address?.takeIf { it.isNotBlank() }?.let { address = it }
             main.post { listener.onLocation(lat, lon) }
         }
+
+        override fun onBookmarkInfo(bookmarkInfo: List<ai.pleos.playground.navi.data.BookmarkInfo>) {
+            bookmarks = bookmarkInfo.map {
+                val kind = when (it.category) {
+                    ai.pleos.playground.navi.constants.BookmarkType.HOME -> "home"
+                    ai.pleos.playground.navi.constants.BookmarkType.OFFICE -> "office"
+                    else -> "bookmark"
+                }
+                NaviPlace(when (kind) { "home" -> "집"; "office" -> "회사"; else -> it.name }, it.latitude, it.longitude, it.address.orEmpty(), kind)
+            }
+            main.post { mergePlaces() }
+        }
+
+        override fun onRecentDestinationInfo(recentDestinationInfo: List<ai.pleos.playground.navi.data.RecentDestinationInfo>) {
+            recents = recentDestinationInfo.map { NaviPlace(it.name, it.latitude, it.longitude, it.address.orEmpty(), "recent") }
+            main.post { mergePlaces() }
+        }
+
+        override fun onBookMarkChanged() { if (naviReady) runCatching { navi.getBookmarkInfo() } }
+
+        override fun onDestinationArrived(destinationArrivedInfo: ai.pleos.playground.navi.data.DestinationArrivedInfo) {
+            Log.d("내비 목적지 도착: ${destinationArrivedInfo.name}")
+            main.post { onArrived?.invoke(destinationArrivedInfo.name) }
+        }
+    }
+
+    /** 즐겨찾기 먼저, 그다음 최근 목적지 (같은 곳은 한 번만) */
+    private fun mergePlaces() {
+        val all = (bookmarks.sortedBy { if (it.kind == "home") 0 else if (it.kind == "office") 1 else 2 } + recents)
+        naviPlaces = all.filter { it.lat != 0.0 }.distinctBy { "%.4f,%.4f".format(it.lat, it.lon) }.take(8)
+        Log.d("내비 장소 ${naviPlaces.size}곳: ${naviPlaces.joinToString { it.name }}")
+    }
+
+    /** 기본 내비 화면에서 이 장소를 보여 준다 (목적지로 안내하기 전, 장소 미리 보기) */
+    fun showInNavi(lat: Double, lon: Double, name: String): Boolean {
+        if (!naviReady) return false
+        return runCatching {
+            navi.requestTrip(ai.pleos.playground.navi.data.TripRequest(lat, lon, "", name, ""))
+            // 장소 정보만 계산하고 화면은 그대로라, 기본 내비 화면을 앞으로 부른다
+            navi.requestNavigationScreen(ai.pleos.playground.navi.data.NavigationScreenRequest.Foreground)
+            Log.d("내비에 장소 보여 주기: $name")
+        }.onFailure { Log.d("내비 장소 보여 주기 실패: $it") }.isSuccess
+    }
+
+    /** 기본 내비로 이 장소까지 길 안내 */
+    fun routeTo(lat: Double, lon: Double, name: String): Boolean {
+        if (!naviReady) return false
+        return runCatching {
+            navi.requestRoute(ai.pleos.playground.navi.data.RouteInfo(lat, lon, null, null, name, "", "", "",
+                ai.pleos.playground.navi.constants.RouteOption.RECOMMENDED, "", false))
+            Log.d("내비 길 안내: $name")
+        }.onFailure { Log.d("내비 길 안내 실패: $it") }.isSuccess
     }
 
     private val pollLocation = object : Runnable {
@@ -176,6 +276,7 @@ class CarSignals(context: Context, private val listener: Listener) {
                 vehicle.getDoor().getCurrentDoorPosition(driverDoor, { p -> main.post { if (driverDoorOpen == null) driverDoorOpen = (p ?: 0) > 0 } }, { Log.d("door get 실패: $it") })
                 vehicle.getDoor().registerDoorPosition(driverDoor, doorListener)
             }.onFailure { Log.d("door 등록 실패: $it") }
+            main.post(pollSafety)
         }, 1500)
 
         navi.initialize(
@@ -183,6 +284,7 @@ class CarSignals(context: Context, private val listener: Listener) {
                 Log.d("NaviHelper 연결됨")
                 naviReady = true
                 navi.addListener(naviListener)
+                runCatching { navi.getBookmarkInfo(); navi.getRecentDestinationInfo() }
             },
             { Log.d("NaviHelper 연결 실패: $it") },
         )
@@ -191,6 +293,7 @@ class CarSignals(context: Context, private val listener: Listener) {
 
     fun stop() {
         main.removeCallbacks(pollLocation)
+        main.removeCallbacks(pollSafety)
         runCatching { vehicle.getGear().unregisterGearSelection(gearListener) }
         runCatching { vehicle.getOdometer().unregisterDistanceDriven(odoListener) }
         runCatching { vehicle.getWiper().unregisterWiperState(front, wiperListener) }
@@ -204,6 +307,7 @@ class CarSignals(context: Context, private val listener: Listener) {
 
     companion object {
         const val LOCATION_POLL_MS = 3000L
+        const val SAFETY_POLL_MS = 5000L
 
         /**
          * 탑승 센서 값 → 사람이 있는지. 에뮬레이터는 반대로 들어온다(콘솔 Occupied → false, 2026-11-02 확인, T01 기록과 같음).

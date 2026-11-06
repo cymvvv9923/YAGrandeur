@@ -17,7 +17,10 @@ const PORT = Number(process.env.PORT || 8090);
 const PROD = process.env.PROD === '1';
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
-const SEED_FILE = path.join(__dirname, 'seed.json');
+// 시연 데이터: seed.json(로드레터 시나리오 가족) · seed-hyeonggyu.json(형규의 퇴근길) · seed-empty.json(아무도 없음)
+// SEED=empty 로 켜면 처음 설치하는 상태로 시작한다. /api/dev/reset?seed=이름 으로 바꿀 수도 있다.
+const seedFile = (name) => path.join(__dirname, name && /^[a-z0-9-]+$/.test(name) ? `seed-${name}.json` : 'seed.json');
+const SEED_FILE = seedFile(process.env.SEED);
 const MEDIA_DIR = path.join(DATA_DIR, 'media');
 const WEB_DIR = path.join(__dirname, '..', 'web');
 
@@ -160,7 +163,30 @@ const WHEN_LABELS = {
   night: '밤길',
   together: '옆자리에 누가 탄 날',
   door: '차에 탈 때',
+  start: '시동 걸 때',
+  park: '도착해 차를 세울 때',
+  long: '오래 운전할 때',
+  warning: '경고등이 켜질 때',
+  region: '그 지역에 들어가면',
 };
+// 장소(좌표)를 함께 받는 조건: place 그 근처 · park 그곳에 세울 때(없으면 어디서든) · region 그 시·군·구
+const WITH_PLACE = ['place', 'park', 'region'];
+const REPEATS = ['once', 'always', 'weekly'];
+
+/** 받는 사람·시간·횟수·답장 조건을 정리한다. 판단은 받는 차 안에서 한다. */
+function cleanConditions(b, circle) {
+  const c = {};
+  if (Array.isArray(b.to)) c.to = b.to.filter((id) => circle.members.some((m) => m.id === id)).slice(0, 20);
+  if (b.replyTo && db.messages.some((m) => m.id === b.replyTo && m.circleId === circle.id)) c.replyTo = b.replyTo;
+  const h = (v) => (Number.isInteger(v) && v >= 0 && v <= 23 ? v : undefined);
+  if (h(b.hourFrom) !== undefined && h(b.hourTo) !== undefined) { c.hourFrom = b.hourFrom; c.hourTo = b.hourTo; }
+  if (Array.isArray(b.days)) c.days = [...new Set(b.days.filter((d) => Number.isInteger(d) && d >= 1 && d <= 7))];
+  if (typeof b.notBefore === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(b.notBefore)) c.notBefore = b.notBefore;
+  c.repeat = REPEATS.includes(b.repeat) ? b.repeat : 'once';
+  if (Number.isInteger(b.longMin) && b.longMin >= 30 && b.longMin <= 600) c.longMin = b.longMin;
+  if (typeof b.regionCode === 'string' && /^\d{2,5}$/.test(b.regionCode)) c.regionCode = b.regionCode;
+  return c;
+}
 
 // 기기 열쇠 -----------------------------------------------------------------
 
@@ -488,7 +514,8 @@ route('POST', '/api/circles/:circleId/messages', guard(async (req, res, p, { cir
   const when = b.when || 'place';
   if (!(when in WHEN_LABELS)) return send(res, 400, { error: '열리는 조건을 다시 골라 주세요' });
   const isPlace = when === 'place';
-  if (isPlace && (typeof b.lat !== 'number' || typeof b.lon !== 'number')) return send(res, 400, { error: '장소를 골라 주세요' });
+  const hasPlace = WITH_PLACE.includes(when) && typeof b.lat === 'number' && typeof b.lon === 'number';
+  if ((isPlace || when === 'region') && !hasPlace) return send(res, 400, { error: '장소를 골라 주세요' });
   if (b.kind !== 'voice' && b.kind !== 'text') return send(res, 400, { error: 'kind는 voice 또는 text' });
   const blocked = containsBlocked(b.text) || containsBlocked(b.placeName);
   if (blocked) return send(res, 422, { error: '부적절한 표현이 있어 남길 수 없어요' });
@@ -500,9 +527,9 @@ route('POST', '/api/circles/:circleId/messages', guard(async (req, res, p, { cir
     authorName: memberName(circle, b.authorId),
     when,
     // 차 상태 메시지는 장소가 없으니 조건 이름을 장소 이름 자리에 둔다
-    placeName: isPlace ? (b.placeName || '이름 없는 장소').slice(0, 40) : WHEN_LABELS[when],
-    lat: isPlace ? b.lat : 0,
-    lon: isPlace ? b.lon : 0,
+    placeName: hasPlace ? (b.placeName || '이름 없는 장소').slice(0, 40) : WHEN_LABELS[when],
+    lat: hasPlace ? b.lat : 0,
+    lon: hasPlace ? b.lon : 0,
     radiusM: Math.min(Math.max(Number(b.radiusM) || 300, 100), 2000),
     kind: b.kind,
     text: (b.text || '').slice(0, 300),
@@ -510,6 +537,7 @@ route('POST', '/api/circles/:circleId/messages', guard(async (req, res, p, { cir
     createdAt: new Date().toISOString(),
     hidden: false,
     reports: [],
+    ...cleanConditions(b, circle),
   };
   if (b.kind === 'voice') {
     if (!b.audioBase64) return send(res, 400, { error: '녹음이 없어요' });
@@ -612,10 +640,35 @@ route('GET', '/api/circles/:circleId/feed', guard((req, res, p, { circle }) => {
 
 // 시연용 (PROD=1이면 막힘) --------------------------------------------------
 
+// 기계음 대신 읽어 주기: 에뮬레이터처럼 차에 음성 엔진이 없을 때, 이 PC(Windows)의 한국어 음성으로 글을 읽어 wav로 준다.
+// 같은 글은 한 번만 만든다. 실제 서비스(PROD)에서는 쓰지 않는다 (실차는 Pleos TTS로 읽는다).
+const TTS_DIR = path.join(DATA_DIR, 'tts');
+route('GET', '/api/tts', guard(async (req, res) => {
+  if (PROD || process.platform !== 'win32') return send(res, 404, { error: 'not found' });
+  const text = String(new URL(req.url, 'http://x').searchParams.get('text') || '').slice(0, 300).trim();
+  if (!text) return send(res, 400, { error: 'text' });
+  fs.mkdirSync(TTS_DIR, { recursive: true });
+  const file = path.join(TTS_DIR, crypto.createHash('sha256').update(text).digest('hex').slice(0, 24) + '.wav');
+  if (!fs.existsSync(file)) {
+    const txt = file + '.txt';
+    fs.writeFileSync(txt, text, 'utf8');
+    const ps = "Add-Type -AssemblyName System.Speech; $s=New-Object System.Speech.Synthesis.SpeechSynthesizer;" +
+      "$v=$s.GetInstalledVoices()|?{$_.VoiceInfo.Culture.Name -eq 'ko-KR'}|select -First 1; if($v){$s.SelectVoice($v.VoiceInfo.Name)};" +
+      `$s.SetOutputToWaveFile('${file}'); $s.Speak([IO.File]::ReadAllText('${txt}',[Text.Encoding]::UTF8)); $s.Dispose()`;
+    await new Promise((ok) => require('child_process').execFile('powershell.exe', ['-NoProfile', '-Command', ps], { timeout: 20000 }, () => ok()));
+    fs.rmSync(txt, { force: true });
+    if (!fs.existsSync(file)) return send(res, 500, { error: '읽지 못했어요' });
+  }
+  serveFile(res, file);
+}, { circleParam: false }));
+
 // 데이터 초기화: 시드로 되돌린다. 모든 기기 열쇠도 없어진다.
 route('POST', '/api/dev/reset', (req, res) => {
   if (PROD) return send(res, 404, { error: 'not found' });
-  fs.copyFileSync(SEED_FILE, DB_FILE);
+  const name = new URL(req.url, 'http://x').searchParams.get('seed');
+  const file = name ? seedFile(name) : SEED_FILE;
+  if (!fs.existsSync(file)) return send(res, 404, { error: 'seed not found' });
+  fs.copyFileSync(file, DB_FILE);
   db = loadDb();
   send(res, 200, { ok: true });
 });

@@ -93,7 +93,7 @@ class TripStore(context: Context) {
 
     /** 모든 모임에서 빠졌다: 이 차에 저장된 기록을 모두 지운다 (설정은 남긴다) */
     fun clearPairing() {
-        device.edit().remove("key").remove("carName").remove("ownerId").remove("memberships").remove("activeCircle").remove("found").apply()
+        device.edit().remove("key").remove("carName").remove("ownerId").remove("memberships").remove("activeCircle").remove("found").remove("spots").apply()
         val keep = theme
         prefs.edit().clear().putString("theme", keep).apply()
     }
@@ -156,6 +156,11 @@ class TripStore(context: Context) {
         get() = prefs.getBoolean("autoHeard", true)
         set(v) = prefs.edit().putBoolean("autoHeard", v).apply()
 
+    /** 운전 중에도 조건이 맞으면 소리로만 들려준다 (화면은 띄우지 않음). 기본 켬 */
+    var playWhileDriving: Boolean
+        get() = prefs.getBoolean("playWhileDriving", true)
+        set(v) = prefs.edit().putBoolean("playWhileDriving", v).apply()
+
     /** 화면 밝기: auto 차 설정(주간·야간) 따르기 · day 밝게 · night 어둡게 */
     var theme: String
         get() = prefs.getString("theme", "auto")!!
@@ -180,6 +185,7 @@ class TripStore(context: Context) {
                 putBoolean("shareHeard", shareHeard); putBoolean("shareWeather", shareWeather)
                 putBoolean("acceptTts", acceptTts); putBoolean("autoHeard", autoHeard)
                 putBoolean("askWithPassenger", askWithPassenger)
+                putBoolean("playWhileDriving", playWhileDriving)
                 putString("theme", theme)
                 putString("tripDate", today)
             }.apply()
@@ -255,6 +261,31 @@ class TripStore(context: Context) {
             runCatching { Found(p[0], p[1].toDouble(), p[2].toDouble(), p.getOrElse(3) { "" }) }.getOrNull()
         }
 
+    /**
+     * 주행 중 말로 저장한 곳 (Gleo 「여기 저장」). 정차한 뒤 안부로 남기거나 지운다. 이 차 안에만 두고 7일이 지나면 지운다.
+     * conditions: 저장할 때 차 상황 (rain · night · together)
+     */
+    data class Spot(val id: String, val lat: Double, val lon: Double, val at: Long, val memo: String, val conditions: String, val address: String = "")
+
+    val spots: List<Spot>
+        get() {
+            val arr = runCatching { org.json.JSONArray(device.getString("spots", "[]")) }.getOrElse { org.json.JSONArray() }
+            val cut = System.currentTimeMillis() - SPOT_KEEP_MS
+            return (0 until arr.length()).map { arr.getJSONObject(it) }.map {
+                Spot(it.getString("id"), it.getDouble("lat"), it.getDouble("lon"), it.getLong("at"), it.optString("memo"), it.optString("cond"), it.optString("addr"))
+            }.filter { it.at >= cut }
+        }
+
+    private fun saveSpots(list: List<Spot>) {
+        val arr = org.json.JSONArray()
+        list.forEach { arr.put(org.json.JSONObject().put("id", it.id).put("lat", it.lat).put("lon", it.lon).put("at", it.at).put("memo", it.memo).put("cond", it.conditions).put("addr", it.address)) }
+        device.edit().putString("spots", arr.toString()).apply()
+    }
+
+    fun addSpot(s: Spot) = saveSpots(spots + s)
+    fun updateSpot(s: Spot) = saveSpots(spots.map { if (it.id == s.id) s else it })
+    fun removeSpot(id: String) = saveSpots(spots.filter { it.id != id })
+
     fun addHeard(item: HeardItem) {
         resetIfNewDay()
         val list = heard.filter { it.messageId != item.messageId } + item
@@ -312,6 +343,8 @@ class TripStore(context: Context) {
     companion object {
         /** 한 번에 이보다 많이 늘면 실제 주행이 아니라 값이 바뀐 것으로 본다 */
         const val ODO_JUMP_KM = 300f
+        /** 주행 중 저장한 곳을 이만큼 지나면 지운다 */
+        const val SPOT_KEEP_MS = 7L * 24 * 3600 * 1000
     }
 
     /** "원우" → "원우가", "용민" → "용민이가" */

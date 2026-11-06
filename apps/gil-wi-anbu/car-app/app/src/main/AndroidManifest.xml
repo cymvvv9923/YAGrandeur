@@ -2,12 +2,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-feature android:name="android.hardware.type.automotive" android:required="true" />
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- 발견 지도(osmdroid)가 타일을 받기 전에 인터넷이 되는지 본다 -->
+    <!-- 지도(MapLibre)가 인터넷이 되는지 본다 -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- 내비가 앞에 있어도 뒤에서 동작 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- 주행 중 말로 대답 받기·녹음 (화면 없이) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="pleos.car.permission.CAR_DRIVE" />
@@ -15,6 +17,8 @@
     <uses-permission android:name="pleos.car.permission.NAVI_ROUTE" />
     <!-- 들러 가기: 메시지 장소를 경유지로 -->
     <uses-permission android:name="pleos.car.permission.NAVI_ROUTE_SEARCH" />
+    <!-- 기본 내비 화면에 장소 보여 주기 (requestTrip·requestNavigationScreen) -->
+    <uses-permission android:name="pleos.car.permission.NAVI_CUSTOM_MAP" />
     <!-- 메시지 열림 조건·일기: 와이퍼(비), 하향등(밤길), 조수석 탑승, 운전석 문 -->
     <uses-permission android:name="pleos.car.permission.CAR_WINDOWS" />
     <uses-permission android:name="pleos.car.permission.CAR_LIGHTS" />
@@ -22,6 +26,12 @@
     <uses-permission android:name="pleos.car.permission.CAR_DOORS" />
     <!-- 글 메시지를 기계음으로 -->
     <uses-permission android:name="pleos.car.permission.TTS_SERVICE" />
+    <uses-permission android:name="pleos.car.permission.STT_SERVICE" />
+    <!-- 경고등(Telltale) · 안전벨트 경고 -->
+    <uses-permission android:name="pleos.car.permission.CAR_SAFETY" />
+    <uses-permission android:name="pleos.car.permission.PRIVATE_CAR_SAFETY" />
+    <!-- 시동 상태(IGNITION_STATE) -->
+    <uses-permission android:name="android.car.permission.CAR_POWERTRAIN" />
     <!-- 재생이 끝나면 내비로 돌아가려고 -->
     <queries>
         <package android:name="ai.umos.maps.android.navigation.app" />
@@ -41,7 +51,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <service android:name=".AnbuService" android:exported="false" android:foregroundServiceType="specialUse">
+        <service android:name=".AnbuService" android:exported="false" android:foregroundServiceType="specialUse|microphone">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Plays family voice messages when the car parks near a place, while the navigation app stays in front." />
         </service>
@@ -51,5 +61,15 @@
             </intent-filter>
         </receiver>
         <receiver android:name=".DemoReceiver" android:exported="true" />
+        <receiver android:name=".ProbeReceiver" android:exported="true" />
+        <!-- Gleo 음성 명령 (assets/schema.json). 주행 중에는 화면 없이 말로만: 여기 저장 · 방금 것 취소 · 몇 곳 저장했는지 -->
+        <receiver android:name=".GleoReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="SAVE_SPOT" />
+                <action android:name="UNDO_SPOT" />
+                <action android:name="COUNT_SPOTS" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

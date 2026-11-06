@@ -1,0 +1,40 @@
+{
+  "packageName": "ai.gilwi.anbu",
+  "appDescription": "Gil-wi Anbu lets family and friends leave voice messages that open on the road. While driving, the driver can save the current spot by voice and turn it into a message after parking.",
+  "version": "0.1.0",
+  "actionCalls": [
+    {
+      "type": "function",
+      "function": {
+        "name": "SAVE_SPOT",
+        "description": "Save the car's current location as a temporary spot while driving, so the driver can leave a message there after parking. Use when the user says things like 'save this spot' or 'remember this place'.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "memo": { "type": "string", "description": "Optional short note the driver said about this spot, in the driver's own words (e.g. 'nice coffee shop')." }
+          },
+          "required": []
+        },
+        "component": "service"
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "UNDO_SPOT",
+        "description": "Delete the most recently saved temporary spot. Use when the user says things like 'cancel what I just saved'.",
+        "parameters": { "type": "object", "properties": {}, "required": [] },
+        "component": "service"
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "COUNT_SPOTS",
+        "description": "Tell how many temporary spots the driver saved today. Use when the user asks how many spots they saved.",
+        "parameters": { "type": "object", "properties": {}, "required": [] },
+        "component": "service"
+      }
+    }
+  ]
+}

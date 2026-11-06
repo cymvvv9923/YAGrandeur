@@ -23,6 +23,8 @@ dependencies {
     implementation("ai.pleos.playground:Vehicle:2.3.2")
     implementation("ai.pleos.playground:NaviHelper:3.0.5")
     implementation("ai.pleos.playground:TextToSpeech:3.3.1")
-    // 일기의 발견 지도 (OpenStreetMap 타일, Apache 2.0)
-    implementation("org.osmdroid:osmdroid-android:6.1.20")
+    // 말로 대답 받기 (앱이 먼저 묻는 흐름). 지금은 검증(ProbeReceiver)에만 쓴다
+    implementation("ai.pleos.playground:SpeechToText:3.3.1")
+    // 메인 안부 지도 (벡터 지도 엔진, BSD-2). 지도 자료는 OpenFreeMap(OpenStreetMap), 스타일은 assets/map에서 직접 정한다.
+    implementation("org.maplibre.gl:android-sdk:11.5.2")
 }

@@ -59,7 +59,7 @@ Speed 0; Car '/vehicle/gear?gear=Park'
 Car '/vehicle/body?front_wiper=Off'; Car '/vehicle/lights?feature=headlamp_mode&value=Off'
 Car '/vehicle/seat?kind=occupied&area=passenger&value=false'; Car '/vehicle/body?door_fl=false'
 if ($Fresh) {
-    Invoke-RestMethod -Method Post http://localhost:8090/api/dev/reset | Out-Null
+    Invoke-RestMethod -Method Post 'http://localhost:8090/api/dev/reset?seed=hyeonggyu' | Out-Null
     $phoneKey = Get-PhoneKey
     # 가족들이 낮에 폰 웹에서 남겨 둔 메시지 (미성의 양재 사거리 메시지는 시드에 있다)
     Post @{ authorId = 'mom';    when = 'door';  kind = 'text'; text = '형규야, 오늘 고생 많았어. 조심히 와' }

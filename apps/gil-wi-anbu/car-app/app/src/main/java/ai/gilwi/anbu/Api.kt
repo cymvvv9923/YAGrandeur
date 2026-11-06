@@ -32,7 +32,25 @@ data class PlaceMessage(
     val opensOn: String = "place",
     /** 어느 모임의 메시지인지 (한 차가 여러 모임에 들어갈 수 있다) */
     val circleId: String = "",
+    /** 받는 사람 (비면 남긴 사람 말고 모임 모두) */
+    val to: List<String> = emptyList(),
+    /** 답장이면 원래 메시지 id */
+    val replyTo: String? = null,
+    /** 시간대 (둘 다 있으면 그 시간에만, from > to면 밤을 넘김) */
+    val hourFrom: Int? = null,
+    val hourTo: Int? = null,
+    /** 요일 1(월)~7(일). 비면 매일 */
+    val days: Set<Int> = emptySet(),
+    /** 이 날짜(yyyy-MM-dd)부터 */
+    val notBefore: String? = null,
+    /** once 한 번 · always 매번(하루 한 번) · weekly 주 1회까지 */
+    val repeat: String = "once",
+    /** 「오래 운전할 때」 기준(분) */
+    val longMin: Int = 120,
+    /** 「그 지역에 들어가면」 시·군·구(5자리) 또는 시·도(2자리) 코드 */
+    val regionCode: String? = null,
 ) {
+    val hasPlace get() = lat != 0.0 || lon != 0.0
     val isPlace get() = opensOn == "place"
     /** "양재 사거리에" / "「비 오는 날」에" */
     val occasion get() = if (isPlace) "${placeName}에" else "「${placeName}」에"
@@ -53,6 +71,9 @@ object Api {
     @Volatile var key: String? = null
     /** 서버가 그 열쇠를 모른다고 할 때(401). 차를 모임에서 뺐거나 서버 데이터가 지워진 경우 */
     var onUnauthorized: ((String) -> Unit)? = null
+
+    /** 서버가 닿는지 (열쇠 없이) */
+    fun ping(done: (Boolean) -> Unit) = call("GET", "/privacy.html", null, k = null) { done(it != null) }
 
     fun mediaUrl(path: String) = if (path.startsWith("http")) path else base + path
 
@@ -268,6 +289,15 @@ object Api {
             audioUrl = if (m.isNull("audioUrl")) null else m.getString("audioUrl"),
             opensOn = m.optString("when", "place"),
             circleId = m.optString("circleId"),
+            to = m.optJSONArray("to")?.let { a -> (0 until a.length()).map { i -> a.getString(i) } } ?: emptyList(),
+            replyTo = m.optString("replyTo").ifBlank { null },
+            hourFrom = if (m.has("hourFrom")) m.getInt("hourFrom") else null,
+            hourTo = if (m.has("hourTo")) m.getInt("hourTo") else null,
+            days = m.optJSONArray("days")?.let { a -> (0 until a.length()).map { i -> a.getInt(i) }.toSet() } ?: emptySet(),
+            notBefore = m.optString("notBefore").ifBlank { null },
+            repeat = m.optString("repeat", "once").ifBlank { "once" },
+            longMin = m.optInt("longMin", 120),
+            regionCode = m.optString("regionCode").ifBlank { null },
         )
     }
 }

@@ -14,10 +14,24 @@ class AnbuService : Service() {
     override fun onCreate() {
         super.onCreate()
         Notifier.init(this)
-        if (Build.VERSION.SDK_INT >= 34) startForeground(Notifier.STATUS_ID, Notifier.status(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        else startForeground(Notifier.STATUS_ID, Notifier.status())
+        goForeground(withMic = false)
         Engine.start(this)
     }
+
+    /**
+     * 주행 중(내비가 앞에 있을 때) 말로 대답 받기·녹음을 하려면 마이크 형식의 포그라운드 서비스여야 한다.
+     * 안드로이드는 앱 화면이 보일 때만 마이크 형식을 켜게 하므로, 화면이 보일 때 MainActivity가 ACTION_MIC로 다시 부른다.
+     */
+    private fun goForeground(withMic: Boolean) {
+        if (Build.VERSION.SDK_INT >= 34) {
+            val type = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or if (withMic && micAllowed()) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
+            runCatching { startForeground(Notifier.STATUS_ID, Notifier.status(), type) }
+                .onFailure { Log.d("마이크 서비스 실패: $it"); startForeground(Notifier.STATUS_ID, Notifier.status(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) }
+            if (withMic) Log.d("서비스 형식: 마이크 ${if (type and ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE != 0) "켬" else "못 켬"}")
+        } else startForeground(Notifier.STATUS_ID, Notifier.status())
+    }
+
+    private fun micAllowed() = checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
     // 알림 버튼
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -26,6 +40,7 @@ class AnbuService : Service() {
             ACTION_REPLAY -> Engine.playCurrent()
             ACTION_LATER -> Engine.later()
             ACTION_DONT_SEND -> Engine.cancelAutoHeard()
+            ACTION_MIC -> goForeground(withMic = true)
         }
         return START_STICKY
     }
@@ -42,6 +57,12 @@ class AnbuService : Service() {
         const val ACTION_REPLAY = "ai.gilwi.anbu.REPLAY"
         const val ACTION_LATER = "ai.gilwi.anbu.LATER"
         const val ACTION_DONT_SEND = "ai.gilwi.anbu.DONT_SEND"
+        const val ACTION_MIC = "ai.gilwi.anbu.MIC"
+
+        /** 화면이 보일 때 불러 마이크 형식을 켠다 */
+        fun enableMic(context: Context) {
+            runCatching { context.startForegroundService(Intent(context, AnbuService::class.java).setAction(ACTION_MIC)) }
+        }
 
         fun start(context: Context) {
             context.startForegroundService(Intent(context, AnbuService::class.java))
@@ -60,6 +81,8 @@ class DemoReceiver : BroadcastReceiver() {
         if (!BuildConfig.DEBUG) return
         Notifier.init(context)
         Engine.start(context)
+        // 시연용: 「오래 운전할 때」를 바로 보려고 주행 시작을 N분 전으로
+        if (intent.hasExtra("driveMin")) { Engine.demoDriveMinutes(intent.getIntExtra("driveMin", 0)); return }
         if (intent.getBooleanExtra("clear", false)) Engine.setDemoLocation(null)
         else if (intent.hasExtra("lat") && intent.hasExtra("lon"))
             Engine.setDemoLocation(intent.getFloatExtra("lat", 0f).toDouble() to intent.getFloatExtra("lon", 0f).toDouble())

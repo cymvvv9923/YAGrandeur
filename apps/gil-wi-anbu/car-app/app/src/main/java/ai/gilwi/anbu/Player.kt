@@ -168,7 +168,12 @@ class Player(private val context: Context) {
         }
         val engine = tts
         if (!androidReady || engine == null) {
-            done(false)
+            // 차에 음성 엔진이 없으면(에뮬레이터) 개발 서버가 PC 음성으로 읽은 파일을 목소리처럼 튼다
+            if (Api.key != null) {
+                media?.runCatching { stop(); release() }; media = null; prepared = false
+                speakStartedAt = 0L; speakEstimate = 0
+                playVoice(BuildConfig.SERVER_URL + "/api/tts?text=" + java.net.URLEncoder.encode(text, "UTF-8"), done, mapOf("X-Key" to Api.key!!))
+            } else done(false)
             return
         }
         engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -180,12 +185,12 @@ class Player(private val context: Context) {
         engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "msg")
     }
 
-    private fun playVoice(url: String, done: (Boolean) -> Unit) {
+    private fun playVoice(url: String, done: (Boolean) -> Unit, headers: Map<String, String> = emptyMap()) {
         val mp = MediaPlayer()
         media = mp
         try {
             mp.setAudioAttributes(speech)
-            mp.setDataSource(url)
+            if (headers.isEmpty()) mp.setDataSource(url) else mp.setDataSource(context, android.net.Uri.parse(url), headers)
             mp.setOnPreparedListener { prepared = true; it.start() }
             mp.setOnCompletionListener { done(true) }
             mp.setOnErrorListener { _, what, extra -> Log.d("재생 오류 $what/$extra"); done(false); true }

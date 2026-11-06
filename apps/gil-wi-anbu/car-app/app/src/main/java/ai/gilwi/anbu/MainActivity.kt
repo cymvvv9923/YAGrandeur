@@ -42,6 +42,15 @@ class MainActivity : Activity(), Engine.Ui {
     private var leaveRadius = 500
     /** 언제 열릴지: place 장소 · rain 비 · night 밤길 · together 옆자리 · door 차에 탈 때 */
     private var leaveWhen = "place"
+    /** 받는 사람 (비면 모임 모두) */
+    private var leaveTo: List<String> = emptyList()
+    /** 답장이면 원래 메시지 */
+    private var leaveReplyTo: PlaceMessage? = null
+    /** 시간대 (WHEN_HOURS의 키) · 요일 (WHEN_DAYS) · 언제부터 (WHEN_FROM) · 횟수 (once·always·weekly) */
+    private var leaveHours = "any"
+    private var leaveDays = "any"
+    private var leaveFrom = "now"
+    private var leaveRepeat = "once"
     private var leaveText = ""
     /** 남기기 단계 (leaveSteps의 몇 번째인지) */
     private var leaveStep = 0
@@ -67,12 +76,18 @@ class MainActivity : Activity(), Engine.Ui {
     /** 설정에 보여 줄 초대 코드 (설정을 열 때 받는다) */
     private var inviteCode: String? = null
     /** 발견 지도. 지도 화면에서만 있다 (위치가 바뀔 때마다 다시 만들면 확대·이동이 풀린다) */
-    private var mapView: org.osmdroid.views.MapView? = null
+    /** 남기기 「지도에서 고르기」 지도. 남기기 화면에 있는 동안 같은 지도를 쓴다 */
+    private var pickMapView: org.maplibre.android.maps.MapView? = null
+    private var pickLib: org.maplibre.android.maps.MapLibreMap? = null
+    /** 이번에 그린 화면에 고르기 지도가 들어 있다 */
+    private var pickShown = false
     /** 남기기 「지도에서 고르기」 지도가 다시 그려져도 보던 자리를 지킨다 */
-    private var leaveMapCenter: org.osmdroid.util.GeoPoint? = null
-    private var leaveMapZoom = 15.0
+    /** 고르기 지도를 처음 열 때 볼 자리 (지도에서 길게 눌러 왔을 때) */
+    private var leaveMapCenter: org.maplibre.android.geometry.LatLng? = null
     /** 메인 지도. 화면을 다시 그려도 같은 지도를 쓴다 (손가락으로 확대·이동한 자리가 풀리지 않게) */
-    private var mainMap: org.osmdroid.views.MapView? = null
+    private var mainMap: org.maplibre.android.maps.MapView? = null
+    private var mainLib: org.maplibre.android.maps.MapLibreMap? = null
+    private var mainStyle: org.maplibre.android.maps.Style? = null
     /** 메인 지도 오른쪽 칸 (기다리는 메시지 · 고른 지역 · 상황별 안부 · 보기) */
     private var mainSide: LinearLayout? = null
     /** 지도 단계: 0 시·도 · 1 시·군·구 · 2 실제 자리 */
@@ -88,6 +103,8 @@ class MainActivity : Activity(), Engine.Ui {
     private var mapSig = ""
     /** 메시지 id → (시·도, 시·군·구). 경계 안에 있는지 계산은 한 번만 */
     private val regionCache = HashMap<String, Pair<Regions.Region?, Regions.Region?>>()
+    /** 주행 중 저장한 곳에서 시작한 남기기 (남기면 그 자리를 목록에서 지운다) */
+    private var leaveSpotId: String? = null
     /** 남기기에서 고른 모임 (여러 모임에 들어가 있을 때). null이면 지금 관리하는 모임 */
     private var leaveCircleId: String? = null
     /** 모임 관리 화면의 차 목록 (화면을 열 때 받는다). null이면 받는 중 */
@@ -108,6 +125,7 @@ class MainActivity : Activity(), Engine.Ui {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        org.maplibre.android.MapLibre.getInstance(this)
         recorder = Recorder(this)
         dictation = Dictation(this)
         Notifier.init(this)
@@ -159,21 +177,27 @@ class MainActivity : Activity(), Engine.Ui {
     override fun onStart() {
         super.onStart()
         Engine.uiVisible = true
+        AnbuService.enableMic(this)
+        maps().forEach { it.onStart() }
         if (::root.isInitialized) takeFocusForPlayback()
     }
 
     override fun onResume() {
         super.onResume()
         render()
-        mapView?.onResume(); mainMap?.onResume()
+        maps().forEach { it.onResume() }
     }
 
+    /** 살아 있는 지도들 (생명주기를 같이 넘긴다) */
+    private fun maps() = listOfNotNull(mainMap, pickMapView)
+
     override fun onPause() {
-        mapView?.onPause(); mainMap?.onPause()
+        maps().forEach { it.onPause() }
         super.onPause()
     }
 
     override fun onStop() {
+        maps().forEach { it.onStop() }
         Engine.uiVisible = false
         // 재생 중에 화면이 가려지면 알림으로 「들었어요·나중에」를 누를 수 있게
         playing?.let { Notifier.playing(it, playState) }
@@ -182,7 +206,8 @@ class MainActivity : Activity(), Engine.Ui {
 
     override fun onDestroy() {
         if (Engine.ui === this) Engine.ui = null
-        mainMap?.onDetach(); mainMap = null
+        maps().forEach { it.onStop(); it.onDestroy() }
+        mainMap = null; mainLib = null; mainStyle = null; pickMapView = null; pickLib = null
         stopPreview()
         recorder.clear()
         dictation.cancel()
@@ -240,14 +265,14 @@ class MainActivity : Activity(), Engine.Ui {
             return
         }
         // 지도는 위치가 바뀔 때마다 새로 그리지 않는다 (보던 자리가 풀린다)
-        if (screen == Screen.LEAVE && mapView != null && parked == true) return
+        if (screen == Screen.LEAVE && pickShown && parked == true) return
         // 메인 지도는 지도를 그대로 두고 그림과 오른쪽 칸만 고친다
         if (screen == Screen.HOME && mainSide != null && parked == true && !Engine.needPairing) { refreshMain(); return }
         render()
     }
 
     /** 재생 화면의 버튼 구성이 달라지는지 가리는 값 */
-    private fun playKey() = "${playing?.id}|${Engine.autoHeardLeft > 0}|${pending.isEmpty()}"
+    private fun playKey() = "${playing?.id}|${Engine.autoHeardLeft > 0}|${pending.isEmpty()}|${Engine.ttsReady}"
 
     /** 차 주인이 없으면 홈으로. 홈의 얼굴 줄에서 고른다. */
     override fun onNeedDriver() {
@@ -270,6 +295,7 @@ class MainActivity : Activity(), Engine.Ui {
     }
 
     override fun onPlayback() {
+        if (parked != true) { render(); return } // 달리는 중에는 화면 없이 소리만
         if (screen != Screen.PLAY) { history.addLast(screen); screen = Screen.PLAY }
         render()
         takeFocusForPlayback()
@@ -302,12 +328,13 @@ class MainActivity : Activity(), Engine.Ui {
         // 설정·입력 화면에 있는 동안은 자동 재생을 미룬다
         Engine.uiBusy = screen != Screen.HOME && screen != Screen.PLAY
         playKey = null // renderPlay가 다시 정한다
-        mapView?.onDetach(); mapView = null
+        pickShown = false
+        if (screen != Screen.LEAVE) dropPickMap()
         mainSide = null; mapLevelView = null
         if (playing != null) stopPreview()
         root.removeAllViews()
         // 메인 지도는 아래로 스크롤하지 않는다 (지도·오른쪽 칸이 화면 높이를 나눠 갖고, 오른쪽 칸만 따로 스크롤)
-        page.locked = screen == Screen.HOME && parked == true && !Engine.needPairing
+        page.locked = (screen == Screen.HOME || screen == Screen.PLAY) && parked == true && !Engine.needPairing
         if (page.locked) page.scrollTo(0, 0)
         if (Engine.needPairing) { rail.visibility = View.GONE; renderPair(); return }
         val railShown = renderRail()
@@ -705,7 +732,7 @@ class MainActivity : Activity(), Engine.Ui {
     private fun isMine(m: PlaceMessage) = m.authorId == Engine.ownerOf(m)
     /** (찾은 수, 모임 사람들이 나에게 남긴 수) */
     private fun discoveryCount(): Pair<Int, Int> {
-        val others = messages.filter { !isMine(it) }
+        val others = messages.filter { !isMine(it) && (it.to.isEmpty() || Engine.ownerOf(it) in it.to) }
         val ids = foundIds()
         return others.count { it.id in ids } to others.size
     }
@@ -850,7 +877,21 @@ class MainActivity : Activity(), Engine.Ui {
             alpha = if (busy) 0.4f else 1f
         })
         root.addView(space(24))
-        root.addView(label(if (busy) "들어가는 중이에요…"
+        // 서버가 안 닿거나 방금 실패했으면 이유를 계속 보여 준다
+        val err = Engine.setupError
+        if (!busy && (!serverOk || err != null)) root.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = rounded(CARD, 2, MEMBER_COLORS["red"] ?: ACCENT)
+            setPadding(dp(28), dp(18), dp(18), dp(18))
+            addView(column().apply {
+                addView(text(if (!serverOk) "서버에 연결되지 않았어요" else err ?: "", 28f, INK, bold = true))
+                addView(label(if (!serverOk) "PC에서 서버(2_start_server.bat)가 켜져 있는지 확인해 주세요. 켜지면 저절로 사라져요. (주소 ${BuildConfig.SERVER_URL})"
+                    else "다시 시도해 주세요."))
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(16) }
+        })
+        root.addView(label(if (busy) "들어가는 중이에요… (서버 응답을 최대 10초 기다려요)"
             else "시작하기 전에 개인정보 처리방침을 보여 드리고 동의를 받아요. 이 차의 고유번호는 알아볼 수 없게 바꿔서(해시) 보내고, 위치는 보내지 않아요."))
         root.addView(space(24))
         root.addView(LinearLayout(this).apply {
@@ -986,35 +1027,187 @@ class MainActivity : Activity(), Engine.Ui {
 
     private fun todayLabel() = java.text.SimpleDateFormat("M월 d일 EEEE", java.util.Locale.KOREA).format(java.util.Date())
 
+    /**
+     * 재생 화면. 화면 높이를 두 칸이 나눠 갖는다.
+     *   왼쪽 「누가·어디서」: 큰 얼굴 · 이름 · 모임 · 어디에 남긴 안부인지 · (글이면 글) · 들러 가기 · 신고
+     *   오른쪽 「듣기」: 큰 재생 버튼과 5초 앞뒤 · 막대 · 「들었어요」 · 처음부터 · 나중에
+     */
     private fun renderPlay() {
         val m = playing ?: run { screen = Screen.HOME; renderHome(); return }
         playKey = playKey()
-        root.addView(label(playState).also { playStateView = it })
-        root.addView(title("${m.authorName}님이 ${m.occasion} 남긴 메시지"))
-        if (m.kind == "text") root.addView(card(listOf(big("“${m.text}”"))))
-        root.addView(playBar(m))
-        root.addView(space(12))
-        root.addView(primary("들었어요") { Engine.heard() }, LinearLayout.LayoutParams(-1, dp(120)))
-        root.addView(row(
-            if (Engine.autoHeardLeft > 0) secondary("보내지 않기") { Engine.cancelAutoHeard() }
-            else secondary("다시 듣기") { Engine.playCurrent() },
-            secondary(if (pending.isEmpty()) "나중에" else "다음 메시지") {
-                if (pending.isEmpty()) Engine.later() else Engine.next()
-            },
-            secondary("신고") { Engine.report() },
-        ))
-        // 들러 가기: 장소 메시지면 그곳을 내비 경유지로 (정차 중에만 보이는 화면)
-        if (m.isPlace) root.addView(row(secondary("${m.placeName} 들러 가기") {
-            toast(if (Engine.addStopover(m)) "${m.placeName}을(를) 경유지에 넣었어요" else "경유지를 넣지 못했어요")
-        }))
-        root.addView(label("「들었어요」를 누르면 ${m.authorName}님에게 알려요." + if (store.autoHeard) " 끝까지 들으면 누르지 않아도 알려요 (공유 설정에서 끌 수 있어요)." else " 누르지 않으면 아무것도 전해지지 않아요."))
+        val c = Engine.circles[m.circleId] ?: circle
+        val replay = Engine.isReplay(m)
+
+        // 맨 위 한 줄: 지금 상태 · 오른쪽 꼬리표
+        root.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(text(playState, 22f, MUTED).also { playStateView = it }, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(text(when {
+                replay -> "다시 듣기 · 이미 「들었어요」를 보냈어요"
+                pending.isNotEmpty() -> "다음 안부 ${pending.size}개가 기다려요"
+                else -> "오늘 받은 안부"
+            }, 20f, ACCENT, weight = 600).apply {
+                background = GradientDrawable().apply { setColor(CHIP); cornerRadius = dp(40).toFloat() }
+                setPadding(dp(20), dp(8), dp(20), dp(8))
+            })
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(14) }
+        })
+
+        val left = panel().apply {
+            background = rounded(CARD, 1, BORDER)
+            setPadding(dp(32), dp(30), dp(32), dp(28))
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(avatar(m.authorName, 104, member = c?.member(m.authorId)), LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(22) })
+                addView(column().apply {
+                    addView(text(m.authorName, 38f, INK, bold = true))
+                    addView(circleTag(m.circleId))
+                })
+            })
+            addView(space(22))
+            addView(text(if (m.opensOn == "park" && m.hasPlace) "${m.placeName}에 도착하면 들려주려고 남긴 ${if (m.kind == "voice") "목소리" else "글"}"
+                else if (m.isPlace) "${m.placeName}${josa(m.placeName, "을", "를")} 지날 때 들려주려고 남긴 ${if (m.kind == "voice") "목소리" else "글"}"
+                else "「${m.placeName}」에 들려주려고 남긴 ${if (m.kind == "voice") "목소리" else "글"}", 28f, INK))
+            heardOn(m)?.let { addView(text(it, 22f, MUTED).apply { setPadding(0, dp(6), 0, 0) }) }
+            if (m.kind == "voice") {
+                // 목소리면 글 대신 「어디서」를 크게: 장소 이름 또는 상황
+                addView(space(22))
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    background = rounded(SOFT)
+                    setPadding(dp(26), dp(26), dp(26), dp(26))
+                    addView(icon(WHEN_ICONS[m.opensOn] ?: R.drawable.ic_pin, 52, circleColor(m.circleId)), LinearLayout.LayoutParams(dp(52), dp(52)).apply { marginEnd = dp(20) })
+                    addView(column().apply {
+                        addView(text(if (m.isPlace) m.placeName else "「${m.placeName}」", 30f, INK, bold = true))
+                        addView(text(if (m.isPlace) "이 근처를 지나서 열렸어요" else WHEN_HINTS[m.opensOn] ?: "", 22f, MUTED))
+                    })
+                }, LinearLayout.LayoutParams(-1, -2))
+            }
+            if (m.kind == "text") {
+                addView(space(18))
+                addView(text("“${m.text}”", 30f, INK, weight = 500).apply {
+                    background = rounded(SOFT)
+                    setPadding(dp(26), dp(22), dp(26), dp(22))
+                })
+            }
+            addView(View(context), LinearLayout.LayoutParams(1, 0, 1f)) // 남는 높이는 여기로, 버튼은 맨 아래
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                if (m.isPlace) addView(secondary("들러 가기") {
+                    toast(if (Engine.addStopover(m)) "${m.placeName}을(를) 경유지에 넣었어요" else "경유지를 넣지 못했어요")
+                }, LinearLayout.LayoutParams(0, dp(88), 1f).apply { marginEnd = dp(12) })
+                addView(secondary("답장") { Engine.later(); startReply(m) }, LinearLayout.LayoutParams(0, dp(88), 1f).apply { marginEnd = dp(12) })
+                addView(secondary("신고") { Engine.report() }, LinearLayout.LayoutParams(dp(160), dp(88)))
+            })
+        }
+
+        val right = panel().apply {
+            background = rounded(CARD, 1, BORDER)
+            setPadding(dp(32), dp(30), dp(32), dp(28))
+            addView(View(context), LinearLayout.LayoutParams(1, 0, 1f))
+            addView(playControls(m))
+            addView(View(context), LinearLayout.LayoutParams(1, 0, 1f))
+            addView(View(context).apply { setBackgroundColor(BORDER) }, LinearLayout.LayoutParams(-1, dp(1)).apply { bottomMargin = dp(22) })
+            addView(primary("들었어요") { Engine.heard() }, LinearLayout.LayoutParams(-1, dp(116)).apply { bottomMargin = dp(14) })
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(if (Engine.autoHeardLeft > 0) secondary("보내지 않기") { Engine.cancelAutoHeard() }
+                    else secondary("처음부터") { Engine.playCurrent() }, LinearLayout.LayoutParams(0, dp(92), 1f).apply { marginEnd = dp(14) })
+                addView(secondary(if (pending.isEmpty()) "나중에 듣기" else "다음 안부") {
+                    if (pending.isEmpty()) Engine.later() else Engine.next()
+                }, LinearLayout.LayoutParams(0, dp(92), 1f))
+            })
+            addView(text(when {
+                replay -> "다시 듣는 중이라 「들었어요」를 또 보내지 않아요."
+                store.autoHeard -> "끝까지 들으면 누르지 않아도 ${m.authorName}님께 「들었어요」를 알려요."
+                else -> "「들었어요」를 누르면 ${m.authorName}님께 알려요."
+            }, 20f, MUTED).apply { setPadding(0, dp(14), 0, 0) })
+        }
+
+        root.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(left, LinearLayout.LayoutParams(0, -1, 1f).apply { marginEnd = dp(16) })
+            addView(right, LinearLayout.LayoutParams(0, -1, 1.35f))
+        }, LinearLayout.LayoutParams(-1, 0, 1f))
+    }
+
+    /** "11월 3일 처음 들었어요" (이 차 주인이 들은 기록이 있으면) */
+    private fun heardOn(m: PlaceMessage): String? {
+        val owner = Engine.ownerOf(m) ?: return null
+        val at = feedHeard.firstOrNull { it.messageId == m.id && it.memberId == owner }?.at ?: return null
+        return runCatching {
+            val d = java.time.Instant.parse(at).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+            "${d.monthValue}월 ${d.dayOfMonth}일 처음 들었어요"
+        }.getOrNull()
+    }
+
+    /** 동그란 버튼 (재생기) */
+    private fun roundButton(s: String, sizeDp: Int, filled: Boolean, onClick: () -> Unit) = text(s, if (filled) 44f else 26f, if (filled) Color.WHITE else INK, bold = true).apply {
+        gravity = Gravity.CENTER
+        setPadding(0, 0, 0, 0)
+        background = pressable(GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            if (filled) setColor(ACCENT) else { setColor(CARD); setStroke(dp(2), BORDER) }
+        })
+        isClickable = true
+        setOnClickListener { onClick() }
+        layoutParams = LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp))
+    }
+
+    /** 재생기: 목소리는 5초 전 · 재생/멈춤 · 5초 뒤 + 막대, 글은 기계음으로 듣기 (못 쓰면 안내만) */
+    private fun playControls(m: PlaceMessage) = column().apply {
+        gravity = Gravity.CENTER_HORIZONTAL
+        fun labeled(v: View, label: String, keep: Boolean = false) = column().apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            addView(v)
+            addView(text(label, 20f, MUTED).apply { gravity = Gravity.CENTER; setPadding(0, dp(10), 0, 0) }.also { if (keep) playToggleLabel = it })
+        }
+        run {
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
+                if (m.kind == "voice") addView(labeled(roundButton("−5", 104, false) { Engine.seekPlay(Engine.playPosition - PREVIEW_JUMP_MS) }, "5초 전"),
+                    LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(40) })
+                addView(labeled(roundButton("", 160, true) {
+                    if (m.kind == "voice") Engine.togglePause()
+                    else if (Engine.playSeekable) Engine.togglePause() else Engine.playCurrent()
+                    updatePlayBar()
+                }.also { playToggle = it }, "", keep = true))
+                if (m.kind == "voice") addView(labeled(roundButton("+5", 104, false) { Engine.seekPlay(Engine.playPosition + PREVIEW_JUMP_MS) }, "5초 뒤"),
+                    LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(40) })
+            })
+            addView(android.widget.SeekBar(context).apply {
+                progressTintList = android.content.res.ColorStateList.valueOf(ACCENT)
+                thumbTintList = android.content.res.ColorStateList.valueOf(if (m.kind == "voice") ACCENT else Color.TRANSPARENT)
+                minimumHeight = dp(56)
+                setPadding(dp(24), dp(16), dp(24), dp(4))
+                isEnabled = m.kind == "voice"
+                setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(sb: android.widget.SeekBar, v: Int, fromUser: Boolean) {
+                        if (fromUser) playTime?.text = "${mmss(v)} / ${mmss(sb.max)}"
+                    }
+                    override fun onStartTrackingTouch(sb: android.widget.SeekBar) { playDragging = true }
+                    override fun onStopTrackingTouch(sb: android.widget.SeekBar) { playDragging = false; Engine.seekPlay(sb.progress); updatePlayBar() }
+                })
+            }.also { playSeek = it }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(26) })
+            addView(text("", 22f, MUTED).apply { gravity = Gravity.CENTER }.also { playTime = it }, LinearLayout.LayoutParams(-1, -2))
+            if (m.kind != "voice") addView(text(if (Engine.ttsReady) "기계음으로 읽어요 · 길이는 어림이에요" else "이 차에 음성 엔진이 없어 개발 서버 음성으로 읽어요",
+                20f, MUTED).apply { gravity = Gravity.CENTER })
+        }
+    }.also {
+        root.removeCallbacks(playTick)
+        root.post(playTick)
     }
 
     // 재생 막대: 목소리는 멈춤·5초 앞뒤·막대로 옮기기, 기계음은 진행만 보인다 ------------------
 
     private var playSeek: android.widget.SeekBar? = null
     private var playTime: TextView? = null
-    private var playToggle: Button? = null
+    private var playToggle: TextView? = null
+    private var playToggleLabel: TextView? = null
     private var playDragging = false
     private val playTick = object : Runnable {
         override fun run() {
@@ -1024,54 +1217,30 @@ class MainActivity : Activity(), Engine.Ui {
         }
     }
 
-    private fun playBar(m: PlaceMessage) = card(listOf(
-        LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            if (m.kind == "voice") {
-                addView(navButton("⏪ 5초") { Engine.seekPlay(Engine.playPosition - PREVIEW_JUMP_MS) })
-                addView(navButton("") { Engine.togglePause(); updatePlayBar() }.also { playToggle = it },
-                    LinearLayout.LayoutParams(dp(240), dp(72)).apply { marginStart = dp(14) })
-                addView(navButton("5초 ⏩") { Engine.seekPlay(Engine.playPosition + PREVIEW_JUMP_MS) },
-                    LinearLayout.LayoutParams(dp(220), dp(72)).apply { marginStart = dp(14) })
-            } else addView(label(if (Engine.ttsReady) "기계음으로 읽어요 · 길이는 어림이에요" else "기계음을 쓸 수 없어 글로 보여 드려요"))
-            addView(text("", 24f, MUTED).apply { gravity = Gravity.END }.also { playTime = it }, LinearLayout.LayoutParams(0, -2, 1f))
-            setPadding(0, dp(4), 0, dp(4))
-        },
-        android.widget.SeekBar(this).apply {
-            progressTintList = android.content.res.ColorStateList.valueOf(ACCENT)
-            thumbTintList = android.content.res.ColorStateList.valueOf(if (m.kind == "voice") ACCENT else Color.TRANSPARENT)
-            minimumHeight = dp(56)
-            setPadding(dp(24), dp(16), dp(24), dp(16))
-            isEnabled = m.kind == "voice"
-            if (m.kind != "voice" && !Engine.ttsReady) visibility = View.GONE
-            setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(sb: android.widget.SeekBar, v: Int, fromUser: Boolean) {
-                    if (fromUser) playTime?.text = "${mmss(v)} / ${mmss(sb.max)}"
-                }
-                override fun onStartTrackingTouch(sb: android.widget.SeekBar) { playDragging = true }
-                override fun onStopTrackingTouch(sb: android.widget.SeekBar) { playDragging = false; Engine.seekPlay(sb.progress); updatePlayBar() }
-            })
-        }.also { playSeek = it },
-    )).also {
-        root.removeCallbacks(playTick)
-        root.post(playTick)
-    }
-
     private fun updatePlayBar() {
         val dur = Engine.playDuration
         val pos = Engine.playPosition
-        playToggle?.text = when {
-            Engine.playPlayingNow -> "⏸ 일시정지"
-            dur > 0 && pos >= dur - 300 -> "▶ 처음부터"
-            dur > 0 -> "▶ 계속 듣기"
-            else -> "불러오는 중…"
+        val (sym, label) = when {
+            playing?.kind != "voice" && !Engine.playSeekable -> if (Engine.playPlayingNow) "…" to "읽는 중" else "▶" to "기계음으로 듣기"
+            Engine.playPlayingNow -> "❚❚" to "일시정지"
+            dur > 0 && pos >= dur - 300 -> "↺" to "처음부터"
+            dur > 0 -> "▶" to "계속 듣기"
+            playing?.kind != "voice" -> "▶" to "기계음으로 듣기"
+            else -> "…" to "불러오는 중"
         }
-        if (playing?.kind != "voice" && !Engine.ttsReady) { playTime?.text = ""; return }
+        playToggle?.text = sym
+        playToggleLabel?.text = label
+        if (playing?.kind != "voice" && !Engine.ttsReady && !Engine.playSeekable && Engine.playDuration == 0) {
+            // 읽지 못했어도 어림 길이로 막대를 채워 둔다
+            val est = ((playing?.text?.length ?: 0) * 140).coerceAtLeast(2000)
+            playSeek?.max = est; playSeek?.progress = 0
+            playTime?.text = "0:00  /  ${mmss(est)}"
+            return
+        }
         if (!playDragging) {
             playSeek?.max = dur.coerceAtLeast(1)
             playSeek?.progress = pos
-            playTime?.text = if (dur > 0) "${mmss(pos)} / ${mmss(dur)}" else ""
+            playTime?.text = if (dur > 0) "${mmss(pos)}  /  ${mmss(dur)}" else ""
         }
     }
 
@@ -1110,7 +1279,7 @@ class MainActivity : Activity(), Engine.Ui {
             addView(column().apply {
                 addView(mapBox, LinearLayout.LayoutParams(-1, 0, 1f))
                 addView(text("얼굴 말풍선 = 찾은 안부 · ? = 아직 못 찾은 안부(이 근처 어딘가) · 「나」 = 내가 남긴 곳 · 길게 누르면 여기에 메시지 남기기", 18f, MUTED).apply { setPadding(0, dp(8), 0, 0) })
-                addView(text("지도 © OpenStreetMap 기여자 · 행정구역 경계 © 통계청(KOSTAT) 2013", 16f, MUTED))
+                addView(text("지도 © OpenStreetMap 기여자 · OpenFreeMap · MapLibre · 행정구역 경계 © 통계청(KOSTAT) 2013", 16f, MUTED))
             }, LinearLayout.LayoutParams(0, -1, 3f))
             addView(ScrollView(context).apply { addView(side) }, LinearLayout.LayoutParams(0, -1, 2f).apply { marginStart = dp(16) })
         }, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -1125,51 +1294,134 @@ class MainActivity : Activity(), Engine.Ui {
         setOnClickListener { onClick() }
     }
 
-    /** 메인 지도를 한 번만 만든다. 확대 수준이 단계 경계를 넘으면 그림을 바꿔 그린다. */
-    private fun createMainMap(): org.osmdroid.views.MapView {
-        val mv = newMapView(track = false)
-        // 화면을 다시 그릴 때 지도를 뗐다 붙인다. 떼어질 때 osmdroid가 지도를 정리하지 않게 하고, 정리는 onDestroy에서 한다.
-        mv.setDestroyMode(false)
-        mv.isTilesScaledToDpi = true
-        mv.minZoomLevel = 6.0
-        mv.addMapListener(object : org.osmdroid.events.MapListener {
-            override fun onScroll(e: org.osmdroid.events.ScrollEvent?) = false
-            override fun onZoom(e: org.osmdroid.events.ZoomEvent?): Boolean {
-                if (levelOf(mv.zoomLevelDouble) != mapLevel) mv.post { drawMainOverlays() }
-                return false
+    /**
+     * 벡터 지도 (MapLibre). 스타일은 assets/map의 단순한 지도: 땅·물·길·시와 동 이름만, 가게·건물·정류장은 그리지 않는다.
+     * 지도 자료는 OpenFreeMap(OpenStreetMap)에서 받는다. 화면을 다시 그릴 때 뗐다 붙여도 되게 TextureView로 그린다.
+     */
+    private fun newVectorMap(): org.maplibre.android.maps.MapView {
+        val opts = org.maplibre.android.maps.MapLibreMapOptions.createFromAttributes(this)
+            .textureMode(true)
+            .pixelRatio(MAP_PIXEL_RATIO) // 이 화면은 1dp = 1px이라 그대로 두면 지도 글자가 작다
+            .localIdeographFontFamily("sans-serif") // 한글 지명은 기기 글꼴로
+            .attributionEnabled(false).logoEnabled(false).compassEnabled(false)
+            .rotateGesturesEnabled(false).tiltGesturesEnabled(false)
+        return org.maplibre.android.maps.MapView(this, opts).apply {
+            onCreate(null); onStart(); onResume()
+            // 바깥 스크롤이 지도 끌기를 가로채지 않게
+            setOnTouchListener { v, _ -> v.parent?.requestDisallowInterceptTouchEvent(true); false }
+            clipToOutline = true
+            outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: android.graphics.Outline) = outline.setRoundRect(0, 0, view.width, view.height, dp(16).toFloat())
             }
-        })
-        // 지금 지역으로 시작 (지금 자리가 든 시·도가 꽉 차게). 위치를 모르면 전국.
-        mv.addOnFirstLayoutListener { _, _, _, _, _ ->
-            val here = lastLoc?.let { Regions.provinceOf(it.first, it.second) }
-            if (here != null) mv.zoomToBoundingBox(org.osmdroid.util.BoundingBox(here.north, here.east, here.south, here.west).increaseByScale(1.1f), false)
-            else mv.zoomToBoundingBox(KOREA, false)
-            drawMainOverlays()
+        }
+    }
+
+    private fun mapStyle() = org.maplibre.android.maps.Style.Builder().fromUri(if (NIGHT) "asset://map/simple-night.json" else "asset://map/simple-day.json")
+
+    private fun bounds(n: Double, e: Double, s: Double, w: Double) = org.maplibre.android.geometry.LatLngBounds.from(n, e, s, w)
+
+    /** 메인 지도를 한 번만 만든다. 확대 수준이 단계 경계를 넘으면 그림을 바꿔 그린다. */
+    private fun createMainMap(): org.maplibre.android.maps.MapView {
+        val mv = newVectorMap()
+        mv.getMapAsync { map ->
+            mainLib = map
+            map.setMinZoomPreference(4.5)
+            map.setStyle(mapStyle()) { st ->
+                mainStyle = st
+                addOverlayLayers(st)
+                // 지금 지역으로 시작 (지금 자리가 든 시·도가 꽉 차게). 위치를 모르면 전국.
+                mv.post {
+                    val here = lastLoc?.let { Regions.provinceOf(it.first, it.second) }
+                    map.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newLatLngBounds(
+                        here?.let { bounds(it.north, it.east, it.south, it.west) } ?: KOREA, dp(40)))
+                    drawMainOverlays()
+                }
+                map.addOnCameraMoveListener { if (levelOf(map.cameraPosition.zoom) != mapLevel) drawMainOverlays() }
+                map.addOnCameraIdleListener { if (levelOf(map.cameraPosition.zoom) != mapLevel) drawMainOverlays() }
+                map.addOnMapClickListener { at -> onMainTap(map, at); true }
+                // 빈 곳을 길게 누르면 그 자리에 메시지 남기기
+                map.addOnMapLongClickListener { at ->
+                    confirm("여기에 메시지를 남길까요?", "고른 자리를 모임의 다른 사람이 지나가면 그 사람 차에서 들려줘요.", "남기기") { openLeaveAt(at.latitude, at.longitude) }
+                    true
+                }
+            }
         }
         return mv
     }
 
-    /** 그 자리를 가운데 두고 부드럽게 확대·축소 (한 번에 옮기면서 확대하면 가운데가 어긋난다) */
-    private fun flyTo(at: org.osmdroid.api.IGeoPoint, zoom: Double) {
-        val mv = mainMap ?: return
-        mv.controller.setCenter(at)
-        mv.controller.zoomTo(zoom, 600L)
+    /** 우리 그림을 올릴 층: 지역 도형 · 말풍선 · 지금 위치 */
+    private fun addOverlayLayers(st: org.maplibre.android.maps.Style) {
+        st.addSource(org.maplibre.android.style.sources.GeoJsonSource("regions"))
+        st.addSource(org.maplibre.android.style.sources.GeoJsonSource("pins"))
+        st.addSource(org.maplibre.android.style.sources.GeoJsonSource("me"))
+        st.addImage("me-dot", dotBitmap(BLUE))
+        val get = { k: String -> org.maplibre.android.style.expressions.Expression.get(k) }
+        st.addLayer(org.maplibre.android.style.layers.FillLayer("region-fill", "regions").withProperties(
+            org.maplibre.android.style.layers.PropertyFactory.fillColor(org.maplibre.android.style.expressions.Expression.toColor(get("fill")))))
+        st.addLayer(org.maplibre.android.style.layers.LineLayer("region-line", "regions").withProperties(
+            org.maplibre.android.style.layers.PropertyFactory.lineColor(org.maplibre.android.style.expressions.Expression.toColor(get("line"))),
+            org.maplibre.android.style.layers.PropertyFactory.lineWidth(get("lw"))))
+        st.addLayer(org.maplibre.android.style.layers.SymbolLayer("me", "me").withProperties(
+            org.maplibre.android.style.layers.PropertyFactory.iconImage("me-dot"),
+            org.maplibre.android.style.layers.PropertyFactory.iconSize(1f / MAP_PIXEL_RATIO),
+            org.maplibre.android.style.layers.PropertyFactory.iconAllowOverlap(true),
+            org.maplibre.android.style.layers.PropertyFactory.iconIgnorePlacement(true)))
+        st.addLayer(org.maplibre.android.style.layers.SymbolLayer("pins", "pins").withProperties(
+            org.maplibre.android.style.layers.PropertyFactory.iconImage(get("icon")),
+            // 지도 배율만큼 그림이 커지므로 되돌린다 (말풍선은 이미 화면 크기에 맞춰 그렸다)
+            org.maplibre.android.style.layers.PropertyFactory.iconSize(1f / MAP_PIXEL_RATIO),
+            org.maplibre.android.style.layers.PropertyFactory.iconAnchor(org.maplibre.android.style.layers.Property.ICON_ANCHOR_BOTTOM),
+            org.maplibre.android.style.layers.PropertyFactory.iconAllowOverlap(true),
+            org.maplibre.android.style.layers.PropertyFactory.iconIgnorePlacement(true),
+            org.maplibre.android.style.layers.PropertyFactory.symbolSortKey(get("z"))))
+    }
+
+    /** 지도를 눌렀다: 말풍선이면 그것, 아니면 지역 도형 */
+    private fun onMainTap(map: org.maplibre.android.maps.MapLibreMap, at: org.maplibre.android.geometry.LatLng) {
+        val pt = map.projection.toScreenLocation(at)
+        map.queryRenderedFeatures(pt, "pins").firstOrNull()?.let { f ->
+            val id = f.getStringProperty("id") ?: return
+            when (f.getStringProperty("kind")) {
+                "region" -> (Regions.provinces + Regions.districts).firstOrNull { it.code == id }?.let { selectRegion(it) }
+                "msg" -> messages.firstOrNull { it.id == id }?.let { selMessage = it; refreshMain() }
+                "spot" -> store.spots.firstOrNull { it.id == id }?.let { sp ->
+                    confirm("이 자리에 안부를 남길까요?", "${sp.memo.ifBlank { spotPlaceName(sp) }} · ${spotWhen(sp)}", "남기기") { openSpot(sp) }
+                }
+                "fuzzy" -> toast("${messages.firstOrNull { it.id == id }?.let { Engine.circles[it.circleId]?.name } ?: "모임"}의 안부가 이 근처 어딘가에 있어요. 지나가면 들려 드려요")
+            }
+            return
+        }
+        map.queryRenderedFeatures(pt, "region-fill").firstOrNull()?.getStringProperty("code")?.let { code ->
+            if (f0(code)) (Regions.provinces + Regions.districts).firstOrNull { it.code == code }?.let { selectRegion(it) }
+        }
+    }
+
+    /** 안부가 있는 지역인지 */
+    private fun f0(code: String) = regionStats(if (code.length > 2) 1 else 0).keys.any { it.code == code }
+
+    /** 그 자리를 가운데 두고 부드럽게 확대·축소 */
+    private fun flyTo(lat: Double, lon: Double, zoom: Double) {
+        mainLib?.animateCamera(org.maplibre.android.camera.CameraUpdateFactory.newLatLngZoom(org.maplibre.android.geometry.LatLng(lat, lon), zoom), 700)
     }
 
     private fun levelOf(zoom: Double) = when { zoom < LEVEL_DISTRICT_ZOOM -> 0; zoom < LEVEL_PLACE_ZOOM -> 1; else -> 2 }
 
-    private fun showKorea() { selRegion = null; mainMap?.zoomToBoundingBox(KOREA, true); refreshSide() }
+    private fun showKorea() {
+        selRegion = null
+        mainLib?.animateCamera(org.maplibre.android.camera.CameraUpdateFactory.newLatLngBounds(KOREA, dp(40)), 700)
+        refreshMain()
+    }
 
     private fun showHere() {
         val loc = lastLoc ?: return toast("아직 위치를 몰라요")
-        flyTo(org.osmdroid.util.GeoPoint(loc.first, loc.second), 14.0)
+        flyTo(loc.first, loc.second, 13.0)
     }
 
     /** 데이터가 바뀌었으면 지도 그림을, 늘 오른쪽 칸을 고친다 */
     private fun refreshMain() {
-        val sig = listOf(messages.joinToString(",") { it.id }, foundIds().sorted().joinToString(","), store.hiddenCircles.sorted(), store.hiddenMembers.sorted(),
+        val sig = listOf(store.spots.joinToString(",") { it.id }, messages.joinToString(",") { it.id }, foundIds().sorted().joinToString(","), store.hiddenCircles.sorted(), store.hiddenMembers.sorted(),
             selRegion?.code, selMessage?.id, lastLoc?.let { "%.3f,%.3f".format(it.first, it.second) }, store.memberships.map { it.ownerId }).toString()
-        if (sig != mapSig && mainMap?.width ?: 0 > 0) drawMainOverlays()
+        if (sig != mapSig && mainStyle != null) drawMainOverlays()
         refreshSide()
     }
 
@@ -1182,7 +1434,8 @@ class MainActivity : Activity(), Engine.Ui {
     /** 보기에서 고른 모임·사람의 메시지만 */
     private fun visibleMessages(): List<PlaceMessage> {
         val hc = store.hiddenCircles; val hm = store.hiddenMembers
-        return messages.filter { it.circleId !in hc && it.authorId !in hm }
+        // 다른 사람에게만 보낸 메시지는 이 차에서 세지 않는다 (내가 남긴 것은 보인다)
+        return messages.filter { it.circleId !in hc && it.authorId !in hm && (isMine(it) || it.to.isEmpty() || Engine.ownerOf(it) in it.to) }
     }
 
     private fun regionsOf(m: PlaceMessage) = regionCache.getOrPut(m.id) {
@@ -1204,92 +1457,93 @@ class MainActivity : Activity(), Engine.Ui {
     /** "서울 강남구" */
     private fun fullName(r: Regions.Region) = if (r.code.length > 2) "${Regions.provinceOfDistrict(r)?.name ?: ""} ${r.name}".trim() else r.name
 
+    private fun hex(c: Int) = String.format("#%06X", 0xFFFFFF and c)
+
     /** 지도 그림: 단계에 맞게 지역 도형·말풍선, 또는 자리마다 얼굴 말풍선 */
     private fun drawMainOverlays() {
-        val mv = mainMap ?: return
-        val level = levelOf(mv.zoomLevelDouble)
+        val map = mainLib ?: return
+        val st = mainStyle ?: return
+        val level = levelOf(map.cameraPosition.zoom)
         mapLevel = level
         mapLevelView?.text = when (level) { 0 -> "시·도 단위 · 손가락으로 확대"; 1 -> "시·군·구 단위"; else -> "실제 자리" }
-        mapSig = listOf(messages.joinToString(",") { it.id }, foundIds().sorted().joinToString(","), store.hiddenCircles.sorted(), store.hiddenMembers.sorted(),
+        mapSig = listOf(store.spots.joinToString(",") { it.id }, messages.joinToString(",") { it.id }, foundIds().sorted().joinToString(","), store.hiddenCircles.sorted(), store.hiddenMembers.sorted(),
             selRegion?.code, selMessage?.id, lastLoc?.let { "%.3f,%.3f".format(it.first, it.second) }, store.memberships.map { it.ownerId }).toString()
-        mv.overlays.clear()
-        // 빈 곳을 길게 누르면 그 자리에 메시지 남기기
-        mv.overlays.add(org.osmdroid.views.overlay.MapEventsOverlay(object : org.osmdroid.events.MapEventsReceiver {
-            override fun singleTapConfirmedHelper(p: org.osmdroid.util.GeoPoint) = false
-            override fun longPressHelper(p: org.osmdroid.util.GeoPoint): Boolean {
-                confirm("여기에 메시지를 남길까요?", "고른 자리를 모임의 다른 사람이 지나가면 그 사람 차에서 들려줘요.", "남기기") { openLeaveAt(p.latitude, p.longitude) }
-                return true
-            }
-        }))
-        if (level < 2) drawRegions(mv, level) else drawPlaces(mv)
-        lastLoc?.let { (lat, lon) ->
-            mv.overlays.add(org.osmdroid.views.overlay.Marker(mv).apply {
-                position = org.osmdroid.util.GeoPoint(lat, lon)
-                icon = android.graphics.drawable.BitmapDrawable(resources, dotBitmap(BLUE))
-                setAnchor(org.osmdroid.views.overlay.Marker.ANCHOR_CENTER, org.osmdroid.views.overlay.Marker.ANCHOR_CENTER)
-                setOnMarkerClickListener { _, _ -> toast("지금 이 차 위치 (이 차 안에서만 보여요)"); true }
-            })
-        }
-        mv.invalidate()
+        // 시·도·시·군·구 단계는 길·지명 없이 지역 도형만 평평하게, 실제 자리 단계에서만 길과 동네 이름
+        val showBase = if (level == 2) org.maplibre.android.style.layers.Property.VISIBLE else org.maplibre.android.style.layers.Property.NONE
+        st.layers.filter { it.id.startsWith("road-") || it.id.startsWith("label-") }
+            .forEach { it.setProperties(org.maplibre.android.style.layers.PropertyFactory.visibility(showBase)) }
+        val images = HashMap<String, android.graphics.Bitmap>()
+        val pins = mutableListOf<org.maplibre.geojson.Feature>()
+        val regions = mutableListOf<org.maplibre.geojson.Feature>()
+        if (level < 2) drawRegions(level, regions, pins, images) else drawPlaces(pins, images)
+        st.addImages(images)
+        st.getSourceAs<org.maplibre.android.style.sources.GeoJsonSource>("regions")?.setGeoJson(org.maplibre.geojson.FeatureCollection.fromFeatures(regions))
+        st.getSourceAs<org.maplibre.android.style.sources.GeoJsonSource>("pins")?.setGeoJson(org.maplibre.geojson.FeatureCollection.fromFeatures(pins))
+        st.getSourceAs<org.maplibre.android.style.sources.GeoJsonSource>("me")?.setGeoJson(org.maplibre.geojson.FeatureCollection.fromFeatures(
+            listOfNotNull(lastLoc?.let { org.maplibre.geojson.Feature.fromGeometry(org.maplibre.geojson.Point.fromLngLat(it.second, it.first)) })))
     }
 
-    private fun drawRegions(mv: org.osmdroid.views.MapView, level: Int) {
+    private fun pin(lat: Double, lon: Double, icon: String, kind: String, id: String, z: Int) =
+        org.maplibre.geojson.Feature.fromGeometry(org.maplibre.geojson.Point.fromLngLat(lon, lat)).apply {
+            addStringProperty("icon", icon); addStringProperty("kind", kind); addStringProperty("id", id); addNumberProperty("z", z)
+        }
+
+    private fun drawRegions(level: Int, regions: MutableList<org.maplibre.geojson.Feature>, pins: MutableList<org.maplibre.geojson.Feature>,
+                            images: HashMap<String, android.graphics.Bitmap>) {
         val stats = regionStats(level)
-        val regions = if (level == 0) Regions.provinces else Regions.districts
+        val list = if (level == 0) Regions.provinces else Regions.districts
         val maxLeft = stats.values.maxOfOrNull { it.total - it.found }?.coerceAtLeast(1) ?: 1
-        regions.forEach { r ->
+        list.forEach { r ->
             val st = stats[r]
             val left = st?.let { it.total - it.found } ?: 0
-            // 아직 못 찾은 안부가 많은 지역일수록 진하게
+            // 땅은 옅은 회색, 안부가 있는 지역은 못 찾은 게 많을수록 진한 파랑, 다 찾으면 초록
             val fill = when {
-                st == null -> Color.TRANSPARENT
-                left == 0 -> withAlpha(GREEN, 45)
-                else -> withAlpha(ACCENT, 25 + 70 * left / maxLeft)
+                st == null -> SOFT
+                left == 0 -> blend(SOFT, GREEN, 0.35f)
+                else -> blend(SOFT, ACCENT, 0.18f + 0.5f * left / maxLeft)
             }
             r.rings.forEach { ring ->
-                mv.overlays.add(org.osmdroid.views.overlay.Polygon(mv).apply {
-                    points = (ring.indices step 2).map { org.osmdroid.util.GeoPoint(ring[it], ring[it + 1]) }
-                    fillPaint.color = fill
-                    outlinePaint.color = if (r == selRegion) ACCENT else withAlpha(MUTED, if (level == 0) 160 else 90)
-                    outlinePaint.strokeWidth = dp(if (r == selRegion) 4 else 1).toFloat()
-                    setOnClickListener { _, _, _ -> if (st != null) selectRegion(r); st != null }
-                })
+                val pts = (ring.indices step 2).map { org.maplibre.geojson.Point.fromLngLat(ring[it + 1], ring[it]) }
+                regions += org.maplibre.geojson.Feature.fromGeometry(org.maplibre.geojson.Polygon.fromLngLats(listOf(pts + pts.first()))).apply {
+                    addStringProperty("code", r.code)
+                    addStringProperty("fill", hex(fill))
+                    // 경계는 바탕색 선으로 지역을 나눈다 (예시처럼 평평하게)
+                    addStringProperty("line", hex(if (r == selRegion) ACCENT else BG))
+                    addNumberProperty("lw", if (r == selRegion) 3 else 1.5)
+                }
             }
         }
         stats.forEach { (r, st) ->
-            mv.overlays.add(org.osmdroid.views.overlay.Marker(mv).apply {
-                position = org.osmdroid.util.GeoPoint(r.labelLat, r.labelLon)
-                icon = android.graphics.drawable.BitmapDrawable(resources, regionBubble(r.name, st, r == selRegion))
-                setAnchor(org.osmdroid.views.overlay.Marker.ANCHOR_CENTER, org.osmdroid.views.overlay.Marker.ANCHOR_BOTTOM)
-                setOnMarkerClickListener { _, _ -> selectRegion(r); true }
-            })
+            val icon = "r_${r.code}_${st.found}_${st.total}_${r == selRegion}_${st.circles.joinToString("")}"
+            images[icon] = regionBubble(r.name, st, r == selRegion)
+            pins += pin(r.labelLat, r.labelLon, icon, "region", r.code, if (r == selRegion) 2 else 1)
         }
     }
 
-    private fun drawPlaces(mv: org.osmdroid.views.MapView) {
+    private fun drawPlaces(pins: MutableList<org.maplibre.geojson.Feature>, images: HashMap<String, android.graphics.Bitmap>) {
         val ids = foundIds()
         val localFound = store.found.associateBy { it.messageId }
+        store.spots.forEach { sp ->
+            images["spot"] = spotBitmap()
+            pins += pin(sp.lat, sp.lon, "spot", "spot", sp.id, 4)
+        }
         visibleMessages().forEach { m ->
-            val c = Engine.circles[m.circleId]
             val color = circleColor(m.circleId)
-            val (lat, lon, bmp) = when {
-                isMine(m) && m.isPlace -> Triple(m.lat, m.lon, faceBubble("나", color, mine = true))
-                m.id in ids && m.isPlace -> Triple(m.lat, m.lon, faceBubble(m.authorName.take(1), color, mine = false))
+            val letter = m.authorName.take(1)
+            val (lat, lon, kind) = when {
+                isMine(m) && m.isPlace -> Triple(m.lat, m.lon, "mine")
+                m.id in ids && m.isPlace -> Triple(m.lat, m.lon, "msg")
                 // 비·밤길 같은 조건 안부는 들었던 자리(이 차 안에만 저장)에
-                m.id in ids -> localFound[m.id]?.let { Triple(it.lat, it.lon, faceBubble(m.authorName.take(1), color, mine = false)) } ?: return@forEach
-                m.isPlace && !isMine(m) -> fuzzy(m).let { Triple(it.first, it.second, fuzzyBitmap(color)) }
+                m.id in ids -> localFound[m.id]?.let { Triple(it.lat, it.lon, "msg") } ?: return@forEach
+                m.isPlace && !isMine(m) -> fuzzy(m).let { Triple(it.first, it.second, "fuzzy") }
                 else -> return@forEach
             }
-            mv.overlays.add(org.osmdroid.views.overlay.Marker(mv).apply {
-                position = org.osmdroid.util.GeoPoint(lat, lon)
-                icon = android.graphics.drawable.BitmapDrawable(resources, bmp)
-                setAnchor(org.osmdroid.views.overlay.Marker.ANCHOR_CENTER, org.osmdroid.views.overlay.Marker.ANCHOR_BOTTOM)
-                setOnMarkerClickListener { _, _ ->
-                    if (m.id in ids || isMine(m)) { selMessage = m; refreshSide() }
-                    else toast("${c?.name ?: "모임"}의 안부가 이 근처 어딘가에 있어요. 지나가면 들려 드려요")
-                    true
-                }
-            })
+            val icon = when (kind) {
+                "mine" -> "m_me_$color".also { images[it] = faceBubble("나", color, mine = true) }
+                "msg" -> "m_${letter}_${color}_${m.id == selMessage?.id}".also { images[it] = faceBubble(letter, color, mine = false) }
+                else -> "f_$color".also { images[it] = fuzzyBitmap(color) }
+            }
+            pins += pin(lat, lon, icon, if (kind == "mine") "msg" else kind, m.id, if (kind == "fuzzy") 0 else if (m.id == selMessage?.id) 3 else 2)
         }
     }
 
@@ -1309,21 +1563,21 @@ class MainActivity : Activity(), Engine.Ui {
     private fun selectRegion(r: Regions.Region) {
         selRegion = r
         selMessage = null
-        val mv = mainMap ?: return
-        val box = org.osmdroid.util.BoundingBox(r.north, r.east, r.south, r.west).increaseByScale(1.15f)
+        val map = mainLib ?: return
+        val box = bounds(r.north, r.east, r.south, r.west)
         // 시·도는 그 시·도가 꽉 차게(시·군·구 단계), 시·군·구는 실제 자리 단계까지
-        val fit = org.osmdroid.views.MapView.getTileSystem().getBoundingBoxZoom(box, mv.width, mv.height)
+        val fit = map.getCameraForLatLngBounds(box, intArrayOf(dp(40), dp(80), dp(40), dp(40)))?.zoom ?: map.cameraPosition.zoom
         val zoom = if (r.code.length > 2) maxOf(fit, LEVEL_PLACE_ZOOM + 0.4) else fit.coerceIn(LEVEL_DISTRICT_ZOOM + 0.1, LEVEL_PLACE_ZOOM - 0.1)
-        flyTo(box.centerWithDateLine, zoom)
-        refreshSide()
+        flyTo(box.center.latitude, box.center.longitude, zoom)
+        refreshMain()
     }
 
     /** 고른 안부가 보이게 지도를 그 자리로 */
     private fun focusMessage(m: PlaceMessage) {
         selMessage = m
         val at = if (m.isPlace) m.lat to m.lon else store.found.firstOrNull { it.messageId == m.id }?.let { it.lat to it.lon }
-        at?.let { flyTo(org.osmdroid.util.GeoPoint(it.first, it.second), maxOf(15.5, mainMap?.zoomLevelDouble ?: 0.0)) }
-        refreshSide()
+        at?.let { flyTo(it.first, it.second, maxOf(14.5, mainLib?.cameraPosition?.zoom ?: 0.0)) }
+        refreshMain()
     }
 
     /** 지도에서 길게 누른 자리로 메시지 남기기 */
@@ -1332,7 +1586,7 @@ class MainActivity : Activity(), Engine.Ui {
         leaveWhen = "place"
         leaveKey = MAP_PICK
         leavePlace = Place("고른 곳", lat, lon)
-        leaveMapCenter = org.osmdroid.util.GeoPoint(lat, lon)
+        leaveMapCenter = org.maplibre.android.geometry.LatLng(lat, lon)
         leaveStep = 1
         render()
     }
@@ -1352,11 +1606,73 @@ class MainActivity : Activity(), Engine.Ui {
                 addView(primary("차 주인 고르기") { Engine.switchCircle(c.id); pickOwner() }, LinearLayout.LayoutParams(-1, dp(88)).apply { topMargin = dp(10) })
             }, panelParams())
         }
+        if (store.spots.isNotEmpty()) side.addView(spotsCard(), panelParams())
         side.addView(waitingPanel(), panelParams())
         selMessage?.takeIf { m -> visibleMessages().any { it.id == m.id } }?.let { side.addView(selectedCard(it), panelParams()) }
         selRegion?.let { side.addView(regionCard(it), panelParams()) }
         side.addView(conditionCard(), panelParams())
         side.addView(filterCard(), panelParams())
+    }
+
+    /** 주행 중 말로 저장한 곳: 하나씩 「안부 남기기」 또는 지우기 */
+    private fun spotsCard() = panel().apply {
+        background = rounded(CARD, 3, ACCENT)
+        val list = store.spots.sortedByDescending { it.at }
+        addView(LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(icon(R.drawable.ic_mic, 40, ACCENT), LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(14) })
+            addView(column().apply {
+                addView(text("달리면서 저장한 곳 ${list.size}곳", 28f, INK, bold = true))
+                addView(label("「여기 저장해 줘」라고 말한 자리예요. 안부로 남겨 보세요"))
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+        })
+        list.take(4).forEach { sp ->
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(12), 0, 0)
+                addView(column().apply {
+                    addView(text(sp.memo.ifBlank { spotPlaceName(sp) }, 24f, INK, weight = 600).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
+                    addView(text(spotWhen(sp) + spotConditions(sp), 20f, MUTED).apply { maxLines = 1 })
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+                // 줄을 누르면 지도가 그 자리로
+                isClickable = true
+                background = pressable(GradientDrawable().apply { cornerRadius = dp(12).toFloat(); setColor(Color.TRANSPARENT) })
+                setOnClickListener { flyTo(sp.lat, sp.lon, 14.5) }
+                addView(button("남기기", rounded(ACCENT), Color.WHITE) { openSpot(sp) }.apply { textSize = 22f; minHeight = dp(72) },
+                    LinearLayout.LayoutParams(dp(130), dp(72)).apply { marginStart = dp(8) })
+                addView(navButton("지우기") {
+                    confirm("이 자리를 지울까요?", "${sp.memo.ifBlank { spotPlaceName(sp) }} · ${spotWhen(sp)}", "지우기") { Engine.removeSpot(sp.id) }
+                }, LinearLayout.LayoutParams(dp(120), dp(72)).apply { marginStart = dp(8) })
+            })
+        }
+        if (list.size > 4) addView(label("그 밖에 ${list.size - 4}곳 · 지도에 「저장」 핀으로 보여요"))
+    }
+
+    /** 저장한 곳의 이름: 들어 있는 시·군·구 ("서울 서초구 어딘가") */
+    private fun spotPlaceName(sp: TripStore.Spot) = sp.address.ifBlank { Regions.districtOf(sp.lat, sp.lon)?.let { fullName(it) } ?: "저장한 곳" }
+
+    private fun spotWhen(sp: TripStore.Spot): String {
+        val t = java.time.Instant.ofEpochMilli(sp.at).atZone(java.time.ZoneId.systemDefault())
+        val today = java.time.LocalDate.now()
+        val day = when (t.toLocalDate()) { today -> "오늘"; today.minusDays(1) -> "어제"; else -> "${t.monthValue}월 ${t.dayOfMonth}일" }
+        return "$day ${t.hour}:${"%02d".format(t.minute)}"
+    }
+
+    private fun spotConditions(sp: TripStore.Spot) = sp.conditions.split(",").filter { it.isNotBlank() }
+        .mapNotNull { mapOf("rain" to "비", "night" to "밤길", "together" to "동승")[it] }.joinToString("") { " · $it" }
+
+    /** 저장한 곳으로 안부 남기기: 장소를 채운 채 「내용」 단계로 바로 */
+    private fun openSpot(sp: TripStore.Spot) {
+        goTab(Screen.LEAVE)
+        leaveWhen = "place"
+        leaveKey = MAP_PICK
+        leavePlace = Place(sp.memo.ifBlank { sp.address.ifBlank { Regions.districtOf(sp.lat, sp.lon)?.name ?: "저장한 곳" } }, sp.lat, sp.lon)
+        leaveMapCenter = org.maplibre.android.geometry.LatLng(sp.lat, sp.lon)
+        leaveSpotId = sp.id
+        leaveStep = 2
+        render()
     }
 
     /** 고른 안부 하나: 누가 · 어느 모임 · 어디서 · 다시 듣기 */
@@ -1374,7 +1690,20 @@ class MainActivity : Activity(), Engine.Ui {
             addView(navButton("닫기") { selMessage = null; refreshSide(); mapSig = "" ; refreshMain() }, LinearLayout.LayoutParams(dp(130), dp(72)))
         })
         if (m.kind == "text" && !discreet()) addView(text("“${m.text}”", 24f, INK).apply { setPadding(0, dp(10), 0, dp(6)) })
-        if (!mine) addView(primary("▶ 다시 듣기") { Engine.replay(m) }, LinearLayout.LayoutParams(-1, dp(88)).apply { topMargin = dp(8) })
+        if (!mine) addView(LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(primary("▶ 다시 듣기") { Engine.replay(m) }, LinearLayout.LayoutParams(0, dp(88), 2f).apply { marginEnd = dp(10) })
+            addView(secondary("답장") { startReply(m) }, LinearLayout.LayoutParams(0, dp(88), 1f))
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) }
+        })
+        if (m.isPlace) addView(LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(secondary("내비에서 보기") { if (!Engine.showInNavi(m.lat, m.lon, m.placeName)) toast("내비에 연결하지 못했어요") },
+                LinearLayout.LayoutParams(0, dp(80), 1f).apply { marginEnd = dp(10) })
+            addView(secondary("여기로 안내") { if (!Engine.routeTo(m.lat, m.lon, m.placeName)) toast("내비에 연결하지 못했어요") },
+                LinearLayout.LayoutParams(0, dp(80), 1f))
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) }
+        })
     }
 
     /** 모임 이름 꼬리표 (모임 색 점 + 이름) */
@@ -1551,6 +1880,20 @@ class MainActivity : Activity(), Engine.Ui {
         return bmp
     }
 
+    /** 주행 중 저장한 곳: 회색 말풍선에 마이크 */
+    private fun spotBitmap(): android.graphics.Bitmap {
+        val w = dp(92); val h = dp(56); val tail = dp(12)
+        val bmp = android.graphics.Bitmap.createBitmap(w, h + tail, android.graphics.Bitmap.Config.ARGB_8888)
+        val cv = android.graphics.Canvas(bmp)
+        val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+        p.color = INK
+        cv.drawRoundRect(0f, 0f, w.toFloat(), h.toFloat(), dp(16).toFloat(), dp(16).toFloat(), p)
+        cv.drawPath(android.graphics.Path().apply { moveTo(w / 2f - tail, h - 1f); lineTo(w / 2f + tail, h - 1f); lineTo(w / 2f, (h + tail).toFloat()); close() }, p)
+        p.color = BG; p.textSize = dp(24).toFloat(); p.typeface = font(700); p.textAlign = android.graphics.Paint.Align.CENTER
+        cv.drawText("저장", w / 2f, h / 2f - (p.descent() + p.ascent()) / 2, p)
+        return bmp
+    }
+
     /** 못 찾은 안부: 흐린 동그라미에 「?」 */
     private fun fuzzyBitmap(color: Int): android.graphics.Bitmap {
         val s = dp(84)
@@ -1565,27 +1908,6 @@ class MainActivity : Activity(), Engine.Ui {
         p.color = withAlpha(color, 230); p.textSize = s * 0.42f; p.typeface = font(700); p.textAlign = android.graphics.Paint.Align.CENTER
         cv.drawText("?", s / 2f, s / 2f - (p.descent() + p.ascent()) / 2, p)
         return bmp
-    }
-
-    /** OpenStreetMap 지도. 둥근 모서리, 야간엔 색을 뒤집는다. 화면마다 하나만 둔다(mapView). */
-    private fun newMapView(track: Boolean = true): org.osmdroid.views.MapView {
-        org.osmdroid.config.Configuration.getInstance().apply {
-            userAgentValue = packageName
-            osmdroidBasePath = java.io.File(cacheDir, "osmdroid")
-            osmdroidTileCache = java.io.File(cacheDir, "osmdroid/tiles")
-        }
-        return org.osmdroid.views.MapView(this).apply {
-            setTileSource(org.osmdroid.tileprovider.tilesource.TileSourceFactory.MAPNIK)
-            setMultiTouchControls(true)
-            zoomController.setVisibility(org.osmdroid.views.CustomZoomButtonsController.Visibility.ALWAYS)
-            if (NIGHT) overlayManager.tilesOverlay.setColorFilter(org.osmdroid.views.overlay.TilesOverlay.INVERT_COLORS)
-            // 바깥 스크롤이 지도 끌기를 가로채지 않게
-            setOnTouchListener { v, _ -> v.parent?.requestDisallowInterceptTouchEvent(true); false }
-            clipToOutline = true
-            outlineProvider = object : android.view.ViewOutlineProvider() {
-                override fun getOutline(view: View, outline: android.graphics.Outline) = outline.setRoundRect(0, 0, view.width, view.height, dp(16).toFloat())
-            }
-        }.also { if (track) mapView = it }
     }
 
     /** 지도 핀: 색 동그라미에 흰 글자 */
@@ -1703,6 +2025,7 @@ class MainActivity : Activity(), Engine.Ui {
         ))
 
         root.addView(section(R.drawable.ic_headphones, "받는 메시지"))
+        root.addView(toggle("운전 중에도 소리로 들려주기 (화면은 안 띄워요, 동승자가 있으면 안 들려줘요)", store.playWhileDriving) { store.playWhileDriving = it })
         root.addView(toggle("글 메시지를 기계음으로 듣기", store.acceptTts) { store.acceptTts = it })
         root.addView(toggle("끝까지 들으면 버튼 없이 「들었어요」 보내기", store.autoHeard) { store.autoHeard = it })
 
@@ -1753,6 +2076,8 @@ class MainActivity : Activity(), Engine.Ui {
 
     private fun prepareLeave() {
         leaveStep = 0
+        leaveTo = emptyList(); leaveReplyTo = null
+        leaveHours = "any"; leaveDays = "any"; leaveFrom = "now"; leaveRepeat = "once"
         if (leaveCircleId == null || store.keyOf(leaveCircleId!!) == null) leaveCircleId = store.activeCircleId
         leaveMapCenter = null
         val lc = leaveCircle()
@@ -1822,12 +2147,12 @@ class MainActivity : Activity(), Engine.Ui {
         })
     }
 
-    private fun leaveSteps() = if (leaveWhen == "place") listOf("when", "place", "content", "confirm") else listOf("when", "content", "confirm")
+    private fun leaveSteps() = if (leaveWhen in WITH_PLACE) listOf("when", "place", "content", "confirm") else listOf("when", "content", "confirm")
 
     /** 1단계: 언제 들려줄지. 고르면 바로 다음으로. */
     private fun leaveWhenStep() {
         root.addView(title("언제 들려줄까요?"))
-        root.addView(label("받는 사람이 그 순간을 지나고, 차를 세웠을 때 재생돼요."))
+        root.addView(label("받는 사람에게 그 순간이 오면 들려줘요. 운전 중이면 소리로만, 옆자리에 누가 있으면 다음에 혼자일 때 들려줘요."))
         root.addView(space(12))
         WHEN_OPTIONS.chunked(3).forEach { group ->
             root.addView(LinearLayout(this).apply {
@@ -1858,11 +2183,21 @@ class MainActivity : Activity(), Engine.Ui {
 
     /** 2단계: 장소와 범위 */
     private fun leavePlaceStep() {
-        root.addView(title("어디를 지날 때 들려줄까요?"))
-        root.addView(label("이 근처를 모임의 다른 사람이 지나가면 그 사람 차에서 들려줘요."))
+        root.addView(title(when (leaveWhen) {
+            "region" -> "어느 지역에 들어가면 들려줄까요?"
+            "park" -> "어디에 도착해 세우면 들려줄까요?"
+            else -> "어디를 지날 때 들려줄까요?"
+        }))
+        if (leaveWhen == "region") leavePlace?.let { p ->
+            root.addView(label("고른 곳이 든 지역: ${Regions.districtOf(p.lat, p.lon)?.let { fullName(it) } ?: "알 수 없음"} (그 시·군·구에 들어가면)"))
+        }
+        root.addView(label(if (Engine.naviPlaces.isNotEmpty()) "내비의 집·회사·최근 목적지에서 고를 수 있어요. 이 근처를 모임의 다른 사람이 지나가면 그 사람 차에서 들려줘요."
+            else "이 근처를 모임의 다른 사람이 지나가면 그 사람 차에서 들려줘요."))
         root.addView(space(12))
         val here = lastLoc?.let { Place(HERE, it.first, it.second) }
-        val places = listOfNotNull(here) + PRESETS
+        // 기본 내비의 집·회사·즐겨찾기·최근 목적지가 있으면 그것을, 없으면 예시 장소를
+        val navi = Engine.naviPlaces.map { Place(it.name, it.lat, it.lon) }
+        val places = listOfNotNull(here) + navi.ifEmpty { PRESETS }.take(5 - 1)
         val buttons = places.map { p ->
             // 좌표가 아니라 고른 버튼으로 표시한다 (지금 자리가 예시 장소 근처여도 하나만 ✓)
             choice(if (leaveKey == p.name) leavePlace?.name ?: p.name else p.name, leaveKey == p.name) { leavePlace = p; leaveKey = p.name; render() }
@@ -1887,38 +2222,49 @@ class MainActivity : Activity(), Engine.Ui {
         }.toTypedArray()))
     }
 
-    /** 「지도에서 고르기」: 누른 곳에 핀을 꽂고 그 자리를 장소로 한다 */
-    private fun pickMap(): org.osmdroid.views.MapView {
-        val mv = newMapView()
-        val picked = leavePlace?.let { org.osmdroid.util.GeoPoint(it.lat, it.lon) }
-        picked?.let { gp ->
-            mv.overlays.add(org.osmdroid.views.overlay.Marker(mv).apply {
-                position = gp
-                icon = android.graphics.drawable.BitmapDrawable(resources, pinBitmap(ACCENT, "나"))
-                setAnchor(org.osmdroid.views.overlay.Marker.ANCHOR_CENTER, org.osmdroid.views.overlay.Marker.ANCHOR_CENTER)
-                setOnMarkerClickListener { _, _ -> true }
-            })
-        }
-        mv.overlays.add(0, org.osmdroid.views.overlay.MapEventsOverlay(object : org.osmdroid.events.MapEventsReceiver {
-            override fun singleTapConfirmedHelper(p: org.osmdroid.util.GeoPoint): Boolean {
-                leaveMapCenter = org.osmdroid.util.GeoPoint(mv.mapCenter.latitude, mv.mapCenter.longitude)
-                leaveMapZoom = mv.zoomLevelDouble
-                leavePlace = Place(leavePlace?.name ?: "고른 곳", p.latitude, p.longitude)
-                render()
-                return true
+    /** 「지도에서 고르기」: 누른 곳에 핀을 꽂고 그 자리를 장소로 한다. 남기기 화면에 있는 동안 같은 지도를 쓴다. */
+    private fun pickMap(): org.maplibre.android.maps.MapView {
+        pickShown = true
+        val mv = pickMapView ?: newVectorMap().also { v ->
+            pickMapView = v
+            v.getMapAsync { map ->
+                pickLib = map
+                map.setStyle(mapStyle()) { st ->
+                    st.addImage("pick", pinBitmap(ACCENT, "나"))
+                    st.addSource(org.maplibre.android.style.sources.GeoJsonSource("pick"))
+                    st.addLayer(org.maplibre.android.style.layers.SymbolLayer("pick", "pick").withProperties(
+                        org.maplibre.android.style.layers.PropertyFactory.iconImage("pick"),
+                        org.maplibre.android.style.layers.PropertyFactory.iconSize(1f / MAP_PIXEL_RATIO),
+                        org.maplibre.android.style.layers.PropertyFactory.iconAllowOverlap(true)))
+                    updatePickPin()
+                    val c = leaveMapCenter ?: leavePlace?.let { org.maplibre.android.geometry.LatLng(it.lat, it.lon) }
+                        ?: lastLoc?.let { org.maplibre.android.geometry.LatLng(it.first, it.second) } ?: org.maplibre.android.geometry.LatLng(37.5, 127.03)
+                    leaveMapCenter = null
+                    map.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newLatLngZoom(c, PICK_ZOOM))
+                }
+                map.addOnMapClickListener { at ->
+                    leavePlace = Place(leavePlace?.name ?: "고른 곳", at.latitude, at.longitude)
+                    render()
+                    true
+                }
             }
-            override fun longPressHelper(p: org.osmdroid.util.GeoPoint) = false
-        }))
-        // 범위를 바꾸는 등 화면을 다시 그려도 보던 자리 그대로
-        mv.addMapListener(object : org.osmdroid.events.MapListener {
-            override fun onScroll(e: org.osmdroid.events.ScrollEvent?): Boolean { leaveMapCenter = org.osmdroid.util.GeoPoint(mv.mapCenter.latitude, mv.mapCenter.longitude); return false }
-            override fun onZoom(e: org.osmdroid.events.ZoomEvent?): Boolean { leaveMapZoom = mv.zoomLevelDouble; return false }
-        })
-        mv.addOnFirstLayoutListener { _, _, _, _, _ ->
-            mv.controller.setZoom(leaveMapZoom)
-            mv.controller.setCenter(leaveMapCenter ?: picked ?: lastLoc?.let { org.osmdroid.util.GeoPoint(it.first, it.second) } ?: org.osmdroid.util.GeoPoint(37.5, 127.03))
         }
+        // 지도에서 길게 눌러 다시 왔으면 그 자리로
+        leaveMapCenter?.let { c -> pickLib?.let { it.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newLatLngZoom(c, PICK_ZOOM)); leaveMapCenter = null } }
+        updatePickPin()
+        (mv.parent as? android.view.ViewGroup)?.removeView(mv)
         return mv
+    }
+
+    private fun updatePickPin() {
+        val st = pickLib?.style ?: return
+        st.getSourceAs<org.maplibre.android.style.sources.GeoJsonSource>("pick")?.setGeoJson(org.maplibre.geojson.FeatureCollection.fromFeatures(
+            listOfNotNull(leavePlace?.takeIf { leaveKey == MAP_PICK }?.let { org.maplibre.geojson.Feature.fromGeometry(org.maplibre.geojson.Point.fromLngLat(it.lon, it.lat)) })))
+    }
+
+    private fun dropPickMap() {
+        pickMapView?.let { it.onPause(); it.onStop(); it.onDestroy() }
+        pickMapView = null; pickLib = null
     }
 
     /** 3단계: 내용 (말로 적기 · 녹음 · 글) */
@@ -1963,11 +2309,38 @@ class MainActivity : Activity(), Engine.Ui {
             addView(text(k, 24f, MUTED), LinearLayout.LayoutParams(dp(200), -2))
             addView(text(v, 28f, INK, weight = 600), LinearLayout.LayoutParams(0, -2, 1f))
         }
+        val reply = leaveReplyTo
         root.addView(card(listOfNotNull(
-            line("언제", whenName),
-            leavePlace?.takeIf { leaveWhen == "place" }?.let { p -> line("장소", "${p.name} · ${if (leaveRadius < 1000) "${leaveRadius}m" else "${leaveRadius / 1000}km"} 안") },
+            reply?.let { line("답장", "${it.authorName}님의 「${it.placeName}」 메시지에") },
+            line("언제", whenName + condSummary()),
+            leavePlace?.takeIf { leaveWhen in WITH_PLACE }?.let { p ->
+                if (leaveWhen == "region") line("지역", Regions.districtOf(p.lat, p.lon)?.let { fullName(it) } ?: p.name)
+                else line("장소", "${p.name} · ${if (leaveRadius < 1000) "${leaveRadius}m" else "${leaveRadius / 1000}km"} 안")
+            },
+            line("받는 사람", if (leaveTo.isEmpty()) "모임 모두" else leaveTo.joinToString(", ") { c.nameOf(it) }),
             line("내용", if (recorder.hasRecording) "목소리 메시지" else "“$leaveText”"),
         )))
+        // 받는 사람 · 시간대 · 요일 · 언제부터 · 횟수
+        root.addView(row(
+            secondary("받는 사람") {
+                val others = c.members.filter { it.id != author }
+                pickFrom("누구에게 남길까요?", listOf("모임 모두") + others.map { it.name }) { i -> leaveTo = if (i == 0) emptyList() else listOf(others[i - 1].id); render() }
+            },
+            secondary("시간대: ${WHEN_HOURS.first { it.first == leaveHours }.second}") {
+                pickFrom("몇 시에 들려줄까요?", WHEN_HOURS.map { it.second }) { i -> leaveHours = WHEN_HOURS[i].first; render() }
+            },
+            secondary("요일: ${WHEN_DAYS.first { it.first == leaveDays }.second}") {
+                pickFrom("무슨 요일에 들려줄까요?", WHEN_DAYS.map { it.second }) { i -> leaveDays = WHEN_DAYS[i].first; render() }
+            },
+        ))
+        root.addView(row(
+            secondary("언제부터: ${WHEN_FROM.first { it.first == leaveFrom }.second}") {
+                pickFrom("언제부터 들려줄까요?", WHEN_FROM.map { it.second }) { i -> leaveFrom = WHEN_FROM[i].first; render() }
+            },
+            secondary("횟수: ${REPEATS.first { it.first == leaveRepeat }.second}") {
+                pickFrom("몇 번 들려줄까요?", REPEATS.map { it.second }) { i -> leaveRepeat = REPEATS[i].first; render() }
+            },
+        ))
         root.addView(row(
             secondary("모임: ${c.name}") {
                 val list = store.memberships.mapNotNull { Engine.circles[it.circleId] }
@@ -1979,7 +2352,41 @@ class MainActivity : Activity(), Engine.Ui {
         val ready = author != null && !sending
         root.addView(primary(if (sending) "보내는 중…" else "남기기") { if (ready) sendLeave(c, author!!) }.apply { alpha = if (ready) 1f else 0.4f },
             LinearLayout.LayoutParams(-1, dp(120)).apply { bottomMargin = dp(8) })
-        root.addView(label(if (author == null) "보내는 사람을 골라 주세요." else "모임의 다른 사람 차에서 들려줘요. ${c.nameOf(author)}님 차에서는 재생되지 않아요."))
+        root.addView(label(if (author == null) "보내는 사람을 골라 주세요."
+            else "${if (leaveTo.isEmpty()) "모임의 다른 사람" else leaveTo.joinToString(", ") { c.nameOf(it) } + "님"} 차에서 들려줘요. ${c.nameOf(author)}님 차에서는 재생되지 않아요."))
+    }
+
+    /** 「 · 밤 23~5시 · 금요일 · 1년 뒤부터 · 매번」 */
+    private fun condSummary(): String = listOfNotNull(
+        WHEN_HOURS.first { it.first == leaveHours }.second.takeIf { leaveHours != "any" },
+        WHEN_DAYS.first { it.first == leaveDays }.second.takeIf { leaveDays != "any" },
+        WHEN_FROM.first { it.first == leaveFrom }.second.takeIf { leaveFrom != "now" },
+        REPEATS.first { it.first == leaveRepeat }.second,
+    ).joinToString("") { " · $it" }
+
+    private fun fromDate(key: String): String? {
+        val d = java.time.LocalDate.now()
+        return when (key) {
+            "tomorrow" -> d.plusDays(1); "week" -> d.plusWeeks(1); "year" -> d.plusYears(1); else -> null
+        }?.toString()
+    }
+
+    /**
+     * 답장 남기기: 받는 사람은 원래 보낸 사람. 장소 메시지면 그 장소를 지날 때, 아니면 다음 시동 때 (시나리오 §4-1).
+     */
+    private fun startReply(m: PlaceMessage) {
+        if (m.circleId.isNotEmpty()) leaveCircleId = m.circleId
+        goTab(Screen.LEAVE)
+        leaveReplyTo = m
+        leaveTo = listOf(m.authorId)
+        leaveAuthor = Engine.ownerOf(m)
+        if (m.hasPlace && m.opensOn in WITH_PLACE) {
+            leaveWhen = "place"; leaveKey = MAP_PICK
+            leavePlace = Place(m.placeName, m.lat, m.lon)
+            leaveMapCenter = org.maplibre.android.geometry.LatLng(m.lat, m.lon)
+        } else leaveWhen = "start"
+        leaveStep = leaveSteps().indexOf("content")
+        render()
     }
 
     /**
@@ -2146,11 +2553,21 @@ class MainActivity : Activity(), Engine.Ui {
 
     private fun sendLeave(c: Circle, author: String) {
         val p = leavePlace
-        if (leaveWhen == "place" && p == null) return
+        if ((leaveWhen == "place" || leaveWhen == "region") && p == null) return
         val voice = recorder.hasRecording
         val body = org.json.JSONObject().put("authorId", author).put("when", leaveWhen)
             .put("kind", if (voice) "voice" else "text").put("text", if (voice) "" else leaveText)
-        if (leaveWhen == "place" && p != null) body.put("placeName", p.name).put("lat", p.lat).put("lon", p.lon).put("radiusM", leaveRadius)
+        if (leaveWhen in WITH_PLACE && p != null) {
+            val region = if (leaveWhen == "region") Regions.districtOf(p.lat, p.lon) else null
+            body.put("placeName", region?.let { fullName(it) } ?: p.name).put("lat", p.lat).put("lon", p.lon).put("radiusM", leaveRadius)
+            region?.let { body.put("regionCode", it.code) }
+        }
+        if (leaveTo.isNotEmpty()) body.put("to", org.json.JSONArray(leaveTo))
+        leaveReplyTo?.let { body.put("replyTo", it.id) }
+        WHEN_HOUR_RANGE[leaveHours]?.let { (f, t) -> body.put("hourFrom", f).put("hourTo", t) }
+        WHEN_DAY_SET[leaveDays]?.let { body.put("days", org.json.JSONArray(it.toList())) }
+        fromDate(leaveFrom)?.let { body.put("notBefore", it) }
+        body.put("repeat", leaveRepeat)
         val doneName = if (leaveWhen == "place") "${p?.name}에" else "「${WHEN_OPTIONS.first { it.first == leaveWhen }.second}」에"
         if (voice) body.put("audioBase64", recorder.base64()).put("audioExt", "m4a")
         sending = true
@@ -2159,7 +2576,10 @@ class MainActivity : Activity(), Engine.Ui {
             sending = false
             if (err != null) { toast(err); render(); return@postMessage }
             toast("$doneName 남겼어요")
+            leaveSpotId?.let { Engine.removeSpot(it) }
+            leaveSpotId = null
             recorder.clear(); leaveText = ""
+            leaveReplyTo = null; leaveTo = emptyList()
             refreshMessages()
             home()
         }
@@ -2223,7 +2643,13 @@ class MainActivity : Activity(), Engine.Ui {
                     background = rounded(CARD, 1, BORDER)
                     setPadding(dp(24), dp(8), dp(12), dp(8))
                     layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) }
-                    addView(big("${m.placeName} · ${if (m.kind == "voice") "목소리" else "글"}" + if (heardBy.isNotEmpty()) " · $heardBy 들음" else " · 아직 아무도 못 찾았어요"), LinearLayout.LayoutParams(0, -2, 1f))
+                    val replies = messages.filter { it.replyTo == m.id }
+                    val status = when {
+                        replies.isNotEmpty() -> "답장 있음 (${replies.joinToString(", ") { it.authorName }})"
+                        heardBy.isNotEmpty() -> "$heardBy 들음"
+                        else -> "아직"
+                    }
+                    addView(big("${m.placeName} · ${if (m.kind == "voice") "목소리" else "글"} · $status"), LinearLayout.LayoutParams(0, -2, 1f))
                     addView(navButton("지우기") {
                         confirm("${m.placeName} 메시지를 지울까요?", "들은 기록도 함께 지워져요.", "지우기") {
                             Api.deleteMessage(m.id, me) { ok -> if (ok) { refreshMessages(); loadFeed() } else toast("지우지 못했어요") }
@@ -2562,7 +2988,7 @@ class MainActivity : Activity(), Engine.Ui {
         private const val REQ_STT = 3
         private const val HERE = "지금 이 자리"
         /** 전국 보기 */
-        private val KOREA = org.osmdroid.util.BoundingBox(38.7, 130.0, 33.0, 124.6)
+        private val KOREA = org.maplibre.android.geometry.LatLngBounds.from(38.7, 130.0, 33.0, 124.6)
         /** 서버도 글을 300자에서 자른다 */
         private const val MAX_TEXT = 300
         /** 메시지가 열리는 조건 (폰 웹·서버와 같은 키) */
@@ -2572,14 +2998,33 @@ class MainActivity : Activity(), Engine.Ui {
             "night" to "밤길",
             "together" to "옆자리에 누가 탄 날",
             "door" to "차에 탈 때",
+            "start" to "시동 걸 때",
+            "park" to "도착해 차를 세울 때",
+            "long" to "오래 운전할 때",
+            "region" to "그 지역에 들어가면",
+            "warning" to "경고등이 켜질 때",
         )
-        private val WHEN_ICONS = mapOf("place" to R.drawable.ic_pin, "rain" to R.drawable.ic_rain, "night" to R.drawable.ic_moon, "together" to R.drawable.ic_people, "door" to R.drawable.ic_door)
+        /** 장소를 함께 고르는 조건 */
+        private val WITH_PLACE = setOf("place", "park", "region")
+        private val WHEN_HOURS = listOf("any" to "언제든", "morning" to "아침 6~10시", "evening" to "저녁 17~21시", "night" to "밤 23~5시")
+        private val WHEN_HOUR_RANGE = mapOf("morning" to (6 to 10), "evening" to (17 to 21), "night" to (23 to 5))
+        private val WHEN_DAYS = listOf("any" to "매일", "weekday" to "평일", "weekend" to "주말", "mon" to "월요일", "fri" to "금요일")
+        private val WHEN_DAY_SET = mapOf("weekday" to setOf(1, 2, 3, 4, 5), "weekend" to setOf(6, 7), "mon" to setOf(1), "fri" to setOf(5))
+        private val WHEN_FROM = listOf("now" to "지금부터", "tomorrow" to "내일부터", "week" to "다음 주부터", "year" to "1년 뒤부터")
+        private val REPEATS = listOf("once" to "한 번", "always" to "매번", "weekly" to "주 1회까지")
+        private val WHEN_ICONS = mapOf("place" to R.drawable.ic_pin, "rain" to R.drawable.ic_rain, "night" to R.drawable.ic_moon, "together" to R.drawable.ic_people, "door" to R.drawable.ic_door,
+            "start" to R.drawable.ic_play, "park" to R.drawable.ic_home, "long" to R.drawable.ic_car, "region" to R.drawable.ic_map, "warning" to R.drawable.ic_shield)
         private val WHEN_HINTS = mapOf(
             "place" to "고른 장소 근처를 지날 때",
             "rain" to "와이퍼가 움직이는 날",
             "night" to "전조등을 켠 밤길",
             "together" to "조수석 탑승이 감지될 때",
             "door" to "운전석 문을 열고 탈 때",
+            "start" to "차가 켜지고 처음 기어를 넣을 때",
+            "park" to "그곳(또는 어디서든)에서 P로 세울 때",
+            "long" to "쉬지 않고 2시간 넘게 달릴 때",
+            "region" to "고른 곳의 시·군·구에 들어갈 때",
+            "warning" to "계기판 경고등이 켜질 때",
         )
         private val STEP_NAMES =mapOf("when" to "언제", "place" to "어디서", "content" to "내용", "confirm" to "확인")
         /** 폰 웹과 같은 예시 장소 */
@@ -2642,8 +3087,12 @@ class MainActivity : Activity(), Engine.Ui {
         /** 모임 색 (모임마다 하나, 들어간 순서대로) */
         private val CIRCLE_COLOR_NAMES = listOf("blue", "orange", "green", "purple", "pink", "teal", "red")
         /** 지도 단계 경계 (확대 수준) */
-        private const val LEVEL_DISTRICT_ZOOM = 8.5
-        private const val LEVEL_PLACE_ZOOM = 11.0
+        /** 지도 글자 크기 배율 */
+        private const val MAP_PIXEL_RATIO = 1.5f
+        /** 「지도에서 고르기」를 열 때 확대 (동네 길이 보이는 정도) */
+        private const val PICK_ZOOM = 12.5
+        private const val LEVEL_DISTRICT_ZOOM = 7.6
+        private const val LEVEL_PLACE_ZOOM = 10.2
 
         fun distanceM(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
             val r = 6_371_000.0

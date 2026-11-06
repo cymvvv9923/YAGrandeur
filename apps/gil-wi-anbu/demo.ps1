@@ -51,7 +51,7 @@ Speed 0; Car '/vehicle/gear?gear=Park'
 Car '/vehicle/body?front_wiper=Off'; Car '/vehicle/lights?feature=headlamp_mode&value=Off'
 Car '/vehicle/seat?kind=occupied&area=passenger&value=false'; Car '/vehicle/body?door_fl=false'
 if ($Fresh) {
-    Invoke-RestMethod -Method Post http://localhost:8090/api/dev/reset | Out-Null
+    Invoke-RestMethod -Method Post 'http://localhost:8090/api/dev/reset?seed=hyeonggyu' | Out-Null
     $phoneKey = Get-PhoneKey
     # 차 상태로 열리는 메시지 (장소 메시지 2개는 시드에 있다)
     Post @{ authorId = 'yongmin';  when = 'door';     kind = 'text'; text = '아버지, 오늘도 조심히 다녀오세요' }
