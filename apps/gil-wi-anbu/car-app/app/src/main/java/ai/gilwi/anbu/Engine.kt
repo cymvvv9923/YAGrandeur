@@ -448,6 +448,9 @@ object Engine : CarSignals.Listener {
 
     fun setDemoLocation(loc: Pair<Double, Double>?) { car.demoLocation = loc }
 
+    /** 위치 권한을 받은 뒤 GPS를 다시 듣는다 */
+    fun restartGps() { if (started) car.restartGps() }
+
     // 차 신호 ------------------------------------------------------------
 
     override fun onGear(gear: CarSignals.Gear) {

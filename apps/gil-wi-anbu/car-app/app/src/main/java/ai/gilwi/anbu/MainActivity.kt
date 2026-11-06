@@ -132,9 +132,12 @@ class MainActivity : Activity(), Engine.Ui {
         Engine.start(this)
         AnbuService.start(this)
         Engine.ui = this
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), REQ_NOTI)
-        }
+        // 알림·위치 권한 (위치는 근처 안부 판단에만 쓰고 서버로 보내지 않는다)
+        val need = listOfNotNull(
+            android.Manifest.permission.POST_NOTIFICATIONS.takeIf { Build.VERSION.SDK_INT >= 33 && checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED },
+            android.Manifest.permission.ACCESS_FINE_LOCATION.takeIf { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED },
+        )
+        if (need.isNotEmpty()) requestPermissions(need.toTypedArray(), REQ_NOTI)
 
         val systemNight = (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
         applyTheme(when (store.theme) { "day" -> false; "night" -> true; else -> systemNight })
@@ -2450,6 +2453,7 @@ class MainActivity : Activity(), Engine.Ui {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_NOTI) { Engine.restartGps(); return }
         if (requestCode != REQ_MIC && requestCode != REQ_STT) return
         if (grantResults.firstOrNull() == android.content.pm.PackageManager.PERMISSION_GRANTED) {
             if (requestCode == REQ_MIC) startRecording() else startDictation()

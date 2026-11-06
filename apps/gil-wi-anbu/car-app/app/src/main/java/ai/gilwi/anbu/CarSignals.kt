@@ -56,6 +56,7 @@ class CarSignals(context: Context, private val listener: Listener) {
     private val main = Handler(Looper.getMainLooper())
     private val vehicle = Vehicle(context)
     private val navi = NaviHelper(context.applicationContext)
+    private val appContext = context.applicationContext
     private var naviReady = false
 
     /** 기본 내비가 알려 준 지금 주소 ("수정구 시흥동"). 주행 중 저장한 곳의 이름으로 쓴다. */
@@ -179,13 +180,43 @@ class CarSignals(context: Context, private val listener: Listener) {
         }.onFailure { Log.d("경유지 추가 실패: $it") }.isSuccess
     }
 
+    // 차의 GPS (안드로이드 위치). 에뮬레이터의 Extended Controls → Location(경로 재생)은 이쪽만 바뀌고 기본 내비는 따라가지 않아서,
+    // GPS가 새로 들어오면 그것을 먼저 쓰고, GPS가 10초 넘게 조용하면 내비 위치를 쓴다.
+    private var lastGpsAt = 0L
+    private val gpsListener = android.location.LocationListener { l ->
+        if (demoLocation != null) return@LocationListener
+        lastGpsAt = android.os.SystemClock.uptimeMillis()
+        main.post { listener.onLocation(l.latitude, l.longitude) }
+    }
+
+    private fun startGps() {
+        if (appContext.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            Log.d("GPS 권한 없음 (내비 위치만 씀)"); return
+        }
+        val lm = appContext.getSystemService(android.location.LocationManager::class.java) ?: return
+        runCatching {
+            lm.requestLocationUpdates(android.location.LocationManager.GPS_PROVIDER, 1000L, 0f, gpsListener, Looper.getMainLooper())
+            Log.d("GPS 듣기 시작")
+        }.onFailure { Log.d("GPS 듣기 실패: $it") }
+    }
+
+    /** 화면에서 위치 권한을 받은 뒤 다시 부른다 */
+    fun restartGps() { stopGps(); startGps() }
+
+    private fun stopGps() {
+        runCatching { appContext.getSystemService(android.location.LocationManager::class.java)?.removeUpdates(gpsListener) }
+    }
+
+    private fun gpsFresh() = lastGpsAt > 0 && android.os.SystemClock.uptimeMillis() - lastGpsAt < GPS_FRESH_MS
+
     private val naviListener = object : NaviHelperEventListener {
         override fun onCurrentLocationInfo(currentLocationInfo: CurrentLocationInfo) {
             if (demoLocation != null) return
+            currentLocationInfo.address?.takeIf { it.isNotBlank() }?.let { address = it }
+            if (gpsFresh()) return // GPS가 움직이고 있으면 그쪽을 쓴다
             val lat = currentLocationInfo.latitude
             val lon = currentLocationInfo.longitude
             if (lat == 0.0 && lon == 0.0) return
-            currentLocationInfo.address?.takeIf { it.isNotBlank() }?.let { address = it }
             main.post { listener.onLocation(lat, lon) }
         }
 
@@ -289,11 +320,13 @@ class CarSignals(context: Context, private val listener: Listener) {
             { Log.d("NaviHelper 연결 실패: $it") },
         )
         main.post(pollLocation)
+        startGps()
     }
 
     fun stop() {
         main.removeCallbacks(pollLocation)
         main.removeCallbacks(pollSafety)
+        stopGps()
         runCatching { vehicle.getGear().unregisterGearSelection(gearListener) }
         runCatching { vehicle.getOdometer().unregisterDistanceDriven(odoListener) }
         runCatching { vehicle.getWiper().unregisterWiperState(front, wiperListener) }
@@ -308,6 +341,8 @@ class CarSignals(context: Context, private val listener: Listener) {
     companion object {
         const val LOCATION_POLL_MS = 3000L
         const val SAFETY_POLL_MS = 5000L
+        /** GPS가 이 시간 안에 들어왔으면 내비 위치보다 GPS를 쓴다 */
+        const val GPS_FRESH_MS = 10_000L
 
         /**
          * 탑승 센서 값 → 사람이 있는지. 에뮬레이터는 반대로 들어온다(콘솔 Occupied → false, 2026-11-02 확인, T01 기록과 같음).

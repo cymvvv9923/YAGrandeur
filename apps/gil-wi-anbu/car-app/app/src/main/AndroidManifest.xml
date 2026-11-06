@@ -5,11 +5,16 @@
     <!-- 지도(MapLibre)가 인터넷이 되는지 본다 -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- 차 GPS (에뮬레이터 경로 재생도 이쪽). 위치는 차 안에서만 쓰고 서버로 보내지 않는다 -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <!-- 내비가 앞에 있어도 뒤에서 동작 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- 주행 중 말로 대답 받기·녹음 (화면 없이) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- 주행 중(내비가 앞)에도 GPS를 받으려면 위치 형식 서비스여야 한다 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="pleos.car.permission.CAR_DRIVE" />
@@ -51,7 +56,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <service android:name=".AnbuService" android:exported="false" android:foregroundServiceType="specialUse|microphone">
+        <service android:name=".AnbuService" android:exported="false" android:foregroundServiceType="specialUse|microphone|location">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Plays family voice messages when the car parks near a place, while the navigation app stays in front." />
         </service>

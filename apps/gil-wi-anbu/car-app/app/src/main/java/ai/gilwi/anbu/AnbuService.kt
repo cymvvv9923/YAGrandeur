@@ -24,13 +24,16 @@ class AnbuService : Service() {
      */
     private fun goForeground(withMic: Boolean) {
         if (Build.VERSION.SDK_INT >= 34) {
-            val type = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or if (withMic && micAllowed()) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
+            val type = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
+                (if (withMic && micAllowed()) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0) or
+                (if (withMic && locAllowed()) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0)
             runCatching { startForeground(Notifier.STATUS_ID, Notifier.status(), type) }
                 .onFailure { Log.d("마이크 서비스 실패: $it"); startForeground(Notifier.STATUS_ID, Notifier.status(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) }
-            if (withMic) Log.d("서비스 형식: 마이크 ${if (type and ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE != 0) "켬" else "못 켬"}")
+            if (withMic) Log.d("서비스 형식: 마이크 ${if (type and ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE != 0) "켬" else "못 켬"} · 위치 ${if (type and ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION != 0) "켬" else "못 켬"}")
         } else startForeground(Notifier.STATUS_ID, Notifier.status())
     }
 
+    private fun locAllowed() = checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
     private fun micAllowed() = checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
     // 알림 버튼
