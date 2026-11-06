@@ -1,0 +1,577 @@
+{
+  "circles": [
+    {
+      "id": "home",
+      "name": "우리집",
+      "type": "family",
+      "inviteCode": "demo-home",
+      "members": [
+        {
+          "id": "dad",
+          "name": "아빠",
+          "title": "아빠",
+          "color": "blue"
+        },
+        {
+          "id": "mom",
+          "name": "엄마",
+          "title": "엄마",
+          "color": "pink"
+        },
+        {
+          "id": "jiyeon",
+          "name": "지연",
+          "title": "누나",
+          "color": "purple"
+        },
+        {
+          "id": "minsu",
+          "name": "민수",
+          "title": "",
+          "color": "green"
+        },
+        {
+          "id": "seojin",
+          "name": "서진",
+          "title": "막내",
+          "color": "orange"
+        }
+      ]
+    },
+    {
+      "id": "friends",
+      "name": "대학 동기",
+      "type": "friends",
+      "inviteCode": "demo-friends",
+      "members": [
+        {
+          "id": "f_minsu",
+          "name": "민수",
+          "title": "",
+          "color": "green"
+        },
+        {
+          "id": "f_jun",
+          "name": "준호",
+          "title": "",
+          "color": "teal"
+        },
+        {
+          "id": "f_hana",
+          "name": "하나",
+          "title": "",
+          "color": "pink"
+        },
+        {
+          "id": "f_tae",
+          "name": "태호",
+          "title": "",
+          "color": "purple"
+        }
+      ]
+    }
+  ],
+  "messages": [
+    {
+      "id": "msg_a1",
+      "circleId": "home",
+      "authorId": "seojin",
+      "authorName": "서진",
+      "when": "place",
+      "placeName": "형 회사 앞 사거리",
+      "lat": 37.497952,
+      "lon": 127.027619,
+      "radiusM": 400,
+      "kind": "text",
+      "text": "월요병 화이팅! 형 오늘도 힘내",
+      "audioUrl": null,
+      "createdAt": "2026-11-02T01:03:00.000Z",
+      "hidden": false,
+      "reports": [],
+      "to": [
+        "minsu"
+      ],
+      "days": [
+        1
+      ],
+      "hourFrom": 6,
+      "hourTo": 10,
+      "repeat": "always"
+    },
+    {
+      "id": "msg_a2",
+      "circleId": "home",
+      "authorId": "mom",
+      "authorName": "엄마",
+      "when": "place",
+      "placeName": "우리 동네",
+      "lat": 37.656,
+      "lon": 126.768,
+      "radiusM": 800,
+      "kind": "voice",
+      "text": "반찬 해 놨다, 지나가면 들러",
+      "audioUrl": "/media/seed_s04.wav",
+      "createdAt": "2026-11-03T02:06:00.000Z",
+      "hidden": false,
+      "reports": [],
+      "to": [
+        "minsu"
+      ]
+    },
+    {
+      "id": "msg_a3d",
+      "circleId": "home",
+      "authorId": "dad",
+      "authorName": "아빠",
+      "when": "place",
+      "placeName": "양평 국수집",
+      "lat": 37.4917,
+      "lon": 127.4873,
+      "radiusM": 500,
+      "kind": "text",
+      "text": "여기 국수 맛 그대로다. 다음엔 다 같이 오자",
+      "audioUrl": null,
+      "createdAt": "2026-11-04T03:09:00.000Z",
+      "hidden": false,
+      "reports": []
+    },
+    {
+      "id": "msg_a3m",
+      "circleId": "home",
+      "authorId": "mom",
+      "authorName": "엄마",
+      "when": "place",
+      "placeName": "양평 국수집",
+      "lat": 37.492,
+      "lon": 127.4878,
+      "radiusM": 500,
+      "kind": "text",
+      "text": "너희 어릴 때 주말마다 왔던 곳이야",
+      "audioUrl": null,
+      "createdAt": "2026-11-01T04:12:00.000Z",
+      "hidden": false,
+      "reports": []
+    },
+    {
+      "id": "msg_a3j",
+      "circleId": "home",
+      "authorId": "jiyeon",
+      "authorName": "지연",
+      "when": "place",
+      "placeName": "양평 국수집",
+      "lat": 37.4914,
+      "lon": 127.4869,
+      "radiusM": 500,
+      "kind": "text",
+      "text": "국수집 아직 그대로다! 사진 찍어 둬",
+      "audioUrl": null,
+      "createdAt": "2026-11-02T05:15:00.000Z",
+      "hidden": false,
+      "reports": []
+    },
+    {
+      "id": "msg_b1a",
+      "circleId": "home",
+      "authorId": "dad",
+      "authorName": "아빠",
+      "when": "place",
+      "placeName": "천안 휴게소",
+      "lat": 36.8065,
+      "lon": 127.1522,
+      "radiusM": 600,
+      "kind": "text",
+      "text": "호두과자 사 와라",
+      "audioUrl": null,
+      "createdAt": "2026-11-03T06:18:00.000Z",
+      "hidden": false,
+      "reports": [],
+      "to": [
+        "minsu"
+      ]
+    },
+    {
+      "id": "msg_b1b",
+      "circleId": "home",
+      "authorId": "dad",
+      "authorName": "아빠",
+      "when": "place",
+      "placeName": "공주 IC",
+      "lat": 36.4465,
+      "lon": 127.1191,
+      "radiusM": 800,
+      "kind": "text",
+      "text": "다 왔다. 조심히 들어와",
+      "audioUrl": null,
+      "createdAt": "2026-11-04T07:21:00.000Z",
+      "hidden": false,
+      "reports": [],
+      "to": [
+        "minsu"
+      ]
+    },
+    {
+      "id": "msg_b1c",
+      "circleId": "home",
+      "authorId": "mom",
+      "authorName": "엄마",
+      "when": "park",
+      "placeName": "고향집",
+      "lat": 36.4555,
+      "lon": 127.1247,
+      "radiusM": 500,
+      "kind": "text",
+      "text": "왔니? 밥 차려 놨다",
+      "audioUrl": null,
+      "createdAt": "2026-11-01T08:24:00.000Z",
+      "hidden": false,
+      "reports": [],
+      "to": [
+        "minsu"
+      ],
+      "repeat": "always"
+    },
+    {
+      "id": "msg_b2",
+      "circleId": "home",
+      "authorId": "jiyeon",
+      "authorName": "지연",
+      "when": "place",
+      "placeName": "누나 집 가는 길목",
+      "lat": 35.1631,
+      "lon": 129.1636,
+      "radiusM": 400,
+      "kind": "text",
+      "text": "여기서 우회전하면 거의 다 왔어",
+      "audioUrl": null,
+      "createdAt": "2026-11-02T00:27:00.000Z",
+      "hidden": false,
+      "reports": []
+    },
+    {
+      "id": "msg_c1",
+      "circleId": "home",
+      "authorId": "jiyeon",
+      "authorName": "지연",
+      "when": "region",
+      "placeName": "강원 강릉시",
+      "lat": 37.7519,
+      "lon": 128.8761,
+      "radiusM": 500,
+      "kind": "text",
+      "text": "강릉 가면 꼭 길감자 먹어",
+      "audioUrl": null,
+      "createdAt": "2026-11-03T01:30:00.000Z",
+      "hidden": false,
+      "reports": [],
+      "to": [
+        "minsu"
+      ],
+      "regionCode": "32030"
+    },
+    {
+      "id": "msg_c2",
+      "circleId": "home",
+      "authorId": "seojin",
+      "authorName": "서진",
+      "when": "place",
+      "placeName": "속초 영금정",
+      "lat": 38.2134,
+      "lon": 128.6017,
+      "radiusM": 400,
+      "kind": "text",
+      "text": "나중에 누구든 여기 오면 들어. 우리 여기서 사진 찍었다",
+      "audioUrl": null,
+      "createdAt": "2026-11-04T02:33:00.000Z",
+      "hidden": false,
+      "reports": []
+    },
+    {
+      "id": "msg_c3",
+      "circleId": "home",
+      "authorId": "dad",
+      "authorName": "아빠",
+      "when": "place",
+      "placeName": "정동진 전망대",
+      "lat": 37.6907,
+      "lon": 129.0349,
+      "radiusM": 500,
+      "kind": "text",
+      "text": "1년 전 오늘 우리 여기 왔었지. 또 오자",
+      "audioUrl": null,
+      "createdAt": "2026-11-01T03:36:00.000Z",
+      "hidden": false,
+      "reports": [],
+      "notBefore": "2027-11-01"
+    },
+    {
+      "id": "msg_d1",
+      "circleId": "home",
+      "authorId": "seojin",
+      "authorName": "서진",
+      "when": "start",
+      "placeName": "시동 걸 때",
+      "lat": 0,
+      "lon": 0,
+      "radiusM": 500,
+      "kind": "text",
+      "text": "형 면접 잘 보고 와! 화이팅",
+      "audioUrl": null,
+      "createdAt": "2026-11-02T04:39:00.000Z",
+      "hidden": false,
+      "reports": [],
+      "to": [
+        "minsu"
+      ]
+    },
+    {
+      "id": "msg_d3",
+      "circleId": "home",
+      "authorId": "mom",
+      "authorName": "엄마",
+      "when": "park",
+      "placeName": "도착해 차를 세울 때",
+      "lat": 0,
+      "lon": 0,
+      "radiusM": 500,
+      "kind": "text",
+      "text": "한 주 수고했어",
+      "audioUrl": null,
+      "createdAt": "2026-11-03T05:42:00.000Z",
+      "hidden": false,
+      "reports": [],
+      "to": [
+        "minsu"
+      ],
+      "days": [
+        5
+      ],
+      "hourFrom": 17,
+      "hourTo": 23,
+      "repeat": "always"
+    },
+    {
+      "id": "msg_e1",
+      "circleId": "home",
+      "authorId": "mom",
+      "authorName": "엄마",
+      "when": "start",
+      "placeName": "시동 걸 때",
+      "lat": 0,
+      "lon": 0,
+      "radiusM": 500,
+      "kind": "text",
+      "text": "밤길 조심해",
+      "audioUrl": null,
+      "createdAt": "2026-11-04T06:45:00.000Z",
+      "hidden": false,
+      "reports": [],
+      "to": [
+        "minsu"
+      ],
+      "hourFrom": 23,
+      "hourTo": 5,
+      "repeat": "weekly"
+    },
+    {
+      "id": "msg_e2",
+      "circleId": "home",
+      "authorId": "jiyeon",
+      "authorName": "지연",
+      "when": "long",
+      "placeName": "오래 운전할 때",
+      "lat": 0,
+      "lon": 0,
+      "radiusM": 500,
+      "kind": "text",
+      "text": "졸리면 무조건 쉬어",
+      "audioUrl": null,
+      "createdAt": "2026-11-01T07:48:00.000Z",
+      "hidden": false,
+      "reports": [],
+      "to": [
+        "minsu"
+      ],
+      "longMin": 120
+    },
+    {
+      "id": "msg_e4",
+      "circleId": "home",
+      "authorId": "dad",
+      "authorName": "아빠",
+      "when": "warning",
+      "placeName": "경고등이 켜질 때",
+      "lat": 0,
+      "lon": 0,
+      "radiusM": 500,
+      "kind": "text",
+      "text": "경고등 켜지면 무조건 보험사 불러라",
+      "audioUrl": null,
+      "createdAt": "2026-11-02T08:51:00.000Z",
+      "hidden": false,
+      "reports": [],
+      "to": [
+        "minsu"
+      ]
+    },
+    {
+      "id": "msg_e5",
+      "circleId": "home",
+      "authorId": "mom",
+      "authorName": "엄마",
+      "when": "rain",
+      "placeName": "비 오는 날",
+      "lat": 0,
+      "lon": 0,
+      "radiusM": 500,
+      "kind": "voice",
+      "text": "비 오는 날엔 천천히 가렴. 우산은 트렁크에 있지?",
+      "audioUrl": "/media/seed_s27.wav",
+      "createdAt": "2026-11-03T00:54:00.000Z",
+      "hidden": false,
+      "reports": [],
+      "to": [
+        "minsu"
+      ]
+    },
+    {
+      "id": "msg_e6",
+      "circleId": "home",
+      "authorId": "jiyeon",
+      "authorName": "지연",
+      "when": "night",
+      "placeName": "밤길",
+      "lat": 0,
+      "lon": 0,
+      "radiusM": 500,
+      "kind": "text",
+      "text": "늦게까지 고생 많았어. 집 가서 푹 자",
+      "audioUrl": null,
+      "createdAt": "2026-11-04T01:57:00.000Z",
+      "hidden": false,
+      "reports": [],
+      "to": [
+        "minsu"
+      ]
+    },
+    {
+      "id": "msg_f1",
+      "circleId": "friends",
+      "authorId": "f_jun",
+      "authorName": "준호",
+      "when": "place",
+      "placeName": "홍대 앞",
+      "lat": 37.5563,
+      "lon": 126.9236,
+      "radiusM": 500,
+      "kind": "text",
+      "text": "홍대 지나가냐? 그 노래방 아직 있더라 ㅋㅋ",
+      "audioUrl": null,
+      "createdAt": "2026-11-01T02:00:00.000Z",
+      "hidden": false,
+      "reports": []
+    },
+    {
+      "id": "msg_f2",
+      "circleId": "friends",
+      "authorId": "f_hana",
+      "authorName": "하나",
+      "when": "place",
+      "placeName": "해운대 바닷길",
+      "lat": 35.1587,
+      "lon": 129.1604,
+      "radiusM": 500,
+      "kind": "text",
+      "text": "해운대 바다 보이지? 졸업 여행 생각난다!",
+      "audioUrl": null,
+      "createdAt": "2026-11-02T03:03:00.000Z",
+      "hidden": false,
+      "reports": []
+    },
+    {
+      "id": "msg_f3",
+      "circleId": "friends",
+      "authorId": "f_tae",
+      "authorName": "태호",
+      "when": "door",
+      "placeName": "차에 탈 때",
+      "lat": 0,
+      "lon": 0,
+      "radiusM": 500,
+      "kind": "text",
+      "text": "출발이냐? 오늘 하루도 무사히!",
+      "audioUrl": null,
+      "createdAt": "2026-11-03T04:06:00.000Z",
+      "hidden": false,
+      "reports": []
+    },
+    {
+      "id": "msg_a0",
+      "circleId": "home",
+      "authorId": "dad",
+      "authorName": "아빠",
+      "when": "place",
+      "placeName": "강남역",
+      "lat": 37.498,
+      "lon": 127.0276,
+      "radiusM": 400,
+      "kind": "voice",
+      "text": "(목소리) 강남역 지날 때마다 네 첫 출근 날 생각난다",
+      "audioUrl": "/media/seed_s03.wav",
+      "createdAt": "2026-11-04T05:09:00.000Z",
+      "hidden": false,
+      "reports": [],
+      "to": [
+        "minsu"
+      ]
+    }
+  ],
+  "heard": [
+    {
+      "messageId": "msg_a3d",
+      "memberId": "minsu",
+      "memberName": "민수",
+      "at": "2026-11-01T01:30:00.000Z",
+      "lastAt": "2026-11-01T01:30:00.000Z",
+      "carId": null,
+      "lastCarId": null
+    },
+    {
+      "messageId": "msg_a2",
+      "memberId": "minsu",
+      "memberName": "민수",
+      "at": "2026-11-02T02:30:00.000Z",
+      "lastAt": "2026-11-02T02:30:00.000Z",
+      "carId": null,
+      "lastCarId": null
+    },
+    {
+      "messageId": "msg_e5",
+      "memberId": "minsu",
+      "memberName": "민수",
+      "at": "2026-11-03T03:30:00.000Z",
+      "lastAt": "2026-11-03T03:30:00.000Z",
+      "carId": null,
+      "lastCarId": null
+    },
+    {
+      "messageId": "msg_f1",
+      "memberId": "f_minsu",
+      "memberName": "민수",
+      "at": "2026-11-04T04:30:00.000Z",
+      "lastAt": "2026-11-04T04:30:00.000Z",
+      "carId": null,
+      "lastCarId": null
+    },
+    {
+      "messageId": "msg_a0",
+      "memberId": "minsu",
+      "memberName": "민수",
+      "at": "2026-11-01T05:30:00.000Z",
+      "lastAt": "2026-11-01T05:30:00.000Z",
+      "carId": null,
+      "lastCarId": null
+    }
+  ],
+  "diaries": [],
+  "devices": []
+}

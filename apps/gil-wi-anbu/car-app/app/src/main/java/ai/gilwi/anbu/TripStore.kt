@@ -98,6 +98,11 @@ class TripStore(context: Context) {
         prefs.edit().clear().putString("theme", keep).apply()
     }
 
+    /** 앱만 버전에서 「나중에 할게요」·연결 끊기로 시연 가족을 거절했다 (다시 자동으로 들어가지 않게) */
+    var demoSkipped: Boolean
+        get() = device.getBoolean("demoSkipped", false)
+        set(v) = device.edit().putBoolean("demoSkipped", v).apply()
+
     /** 메인 지도에서 가린 모임·사람 (이 차 안에만) */
     var hiddenCircles: Set<String>
         get() = device.getStringSet("hiddenCircles", emptySet())!!

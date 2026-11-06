@@ -121,6 +121,7 @@ object Engine : CarSignals.Listener {
         if (started) return
         started = true
         app = context.applicationContext
+        if (BuildConfig.STANDALONE) LocalServer.init(app)
         store = TripStore(app)
         player = Player(app)
         car = CarSignals(app, this)
@@ -130,6 +131,7 @@ object Engine : CarSignals.Listener {
         Api.key = store.deviceKey
         Api.onUnauthorized = ::dropKey
         if (Api.key == null) beginPairing() else refreshFromServer()
+        if (BuildConfig.STANDALONE && Api.key == null && !store.demoSkipped) main.postDelayed({ joinDemo() }, 2500)
         // 다른 모임에 더 들어갈 때도 차 고유번호(해시)를 쓴다
         main.postDelayed({ car.readVin { vin -> if (vinHash == null) useVin(vin) } }, 2000)
     }
@@ -234,10 +236,44 @@ object Engine : CarSignals.Listener {
         changed()
     }
 
+    // 앱만 버전: 처음 켜면 시연 가족에 「민수의 차」로 바로 들어간다 ---------------------
+
+    /** 우리집(민수) → 대학 동기(민수) 순서로 들어가고, 관리하는 모임은 우리집 */
+    fun joinDemo(done: () -> Unit = {}) {
+        if (!BuildConfig.STANDALONE) return
+        Log.d("시연 가족으로 시작")
+        joinCircle(DEMO_HOME) { e1 ->
+            if (e1 != null) { Log.d("시연 가족 실패: $e1"); done(); return@joinCircle }
+            setOwner(DEMO_OWNER) {
+                joinCircle(DEMO_FRIENDS) { e2 ->
+                    if (e2 == null) Api.setOwner(DEMO_FRIEND_OWNER) { name -> store.syncMembership(Api.key!!, DEMO_FRIEND_OWNER, name) }
+                    main.postDelayed({
+                        store.memberships.firstOrNull { it.circleId == "home" }?.let { switchCircle(it.circleId) }
+                        refreshFromServer()
+                        done()
+                    }, 800)
+                }
+            }
+        }
+    }
+
+    /** 설정의 「시연 데이터로 되돌리기」: 앱 안 서버와 이 차의 기록을 처음으로 */
+    fun resetDemo(done: () -> Unit) {
+        if (!BuildConfig.STANDALONE) return
+        player.stop(); playing = null; pending.clear(); skipped.clear()
+        LocalServer.reset()
+        store.clearPairing()
+        Api.key = null
+        beginPairing()
+        main.postDelayed({ joinDemo(done) }, 500)
+    }
+
     /** 모든 모임에서 빠졌다: 처음부터 다시 연결 */
     private fun unpairedAll() {
         Log.d("들어간 모임이 없어 처음 화면으로")
         store.clearPairing()
+        // 앱만 버전: 직접 연결을 끊었으면 다음에 켤 때 시연 가족으로 저절로 들어가지 않는다
+        if (BuildConfig.STANDALONE) store.demoSkipped = true
         Api.key = null
         player.stop()
         playing = null
@@ -933,4 +969,8 @@ object Engine : CarSignals.Listener {
     private const val AUTO_HEARD_TEXT_SEC = 10
     private const val REPLAY_GAP_MS = 2_000L
     private const val SPOT_MERGE_MS = 60_000L
+    private const val DEMO_HOME = "demo-home"
+    private const val DEMO_FRIENDS = "demo-friends"
+    private const val DEMO_OWNER = "minsu"
+    private const val DEMO_FRIEND_OWNER = "f_minsu"
 }

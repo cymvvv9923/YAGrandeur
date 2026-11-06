@@ -169,7 +169,7 @@ class Player(private val context: Context) {
         val engine = tts
         if (!androidReady || engine == null) {
             // 차에 음성 엔진이 없으면(에뮬레이터) 개발 서버가 PC 음성으로 읽은 파일을 목소리처럼 튼다
-            if (Api.key != null) {
+            if (Api.key != null && !BuildConfig.STANDALONE) {
                 media?.runCatching { stop(); release() }; media = null; prepared = false
                 speakStartedAt = 0L; speakEstimate = 0
                 playVoice(BuildConfig.SERVER_URL + "/api/tts?text=" + java.net.URLEncoder.encode(text, "UTF-8"), done, mapOf("X-Key" to Api.key!!))

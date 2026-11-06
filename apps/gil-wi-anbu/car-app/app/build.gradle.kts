@@ -13,6 +13,8 @@ android {
         versionName = "0.1.0"
         // 에뮬레이터에서 PC의 서버(localhost:8090)는 10.0.2.2로 보인다
         buildConfigField("String", "SERVER_URL", "\"http://10.0.2.2:8090\"")
+        // 앱만으로 동작하는 시연 버전 (브랜치 v002-standalone). 서버 없이 앱 안(LocalServer)에서 모든 기능이 돈다.
+        buildConfigField("boolean", "STANDALONE", "true")
     }
     buildFeatures { buildConfig = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }

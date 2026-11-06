@@ -896,7 +896,9 @@ class MainActivity : Activity(), Engine.Ui {
         root.addView(space(24))
         root.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            addView(navButton("← 나중에 할게요") { openNavi() }, LinearLayout.LayoutParams(dp(320), dp(80)))
+            addView(navButton("← 나중에 할게요") { if (BuildConfig.STANDALONE) store.demoSkipped = true; openNavi() }, LinearLayout.LayoutParams(dp(320), dp(80)))
+            if (BuildConfig.STANDALONE) addView(navButton("시연 가족으로 시작") { store.demoSkipped = false; Engine.joinDemo { render() } },
+                LinearLayout.LayoutParams(dp(320), dp(80)).apply { marginStart = dp(16) })
             addView(navButton("개인정보 처리방침") { showPrivacy(null) }, LinearLayout.LayoutParams(dp(320), dp(80)).apply { marginStart = dp(16) })
         })
     }
@@ -948,7 +950,7 @@ class MainActivity : Activity(), Engine.Ui {
                     if (r.isForMainFrame) v.loadDataWithBaseURL(null, PRIVACY_FALLBACK, "text/html", "utf-8", null)
                 }
             }
-            loadUrl(BuildConfig.SERVER_URL + "/privacy.html")
+            loadUrl(if (BuildConfig.STANDALONE) "file:///android_asset/privacy.html" else BuildConfig.SERVER_URL + "/privacy.html")
         }
         AlertDialog.Builder(this, dialogTheme())
             .setTitle(if (okLabel != null) "이름·메시지·목소리를 모임 사람들과 나눠요" else "개인정보 처리방침")
@@ -1194,7 +1196,7 @@ class MainActivity : Activity(), Engine.Ui {
                 })
             }.also { playSeek = it }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(26) })
             addView(text("", 22f, MUTED).apply { gravity = Gravity.CENTER }.also { playTime = it }, LinearLayout.LayoutParams(-1, -2))
-            if (m.kind != "voice") addView(text(if (Engine.ttsReady) "기계음으로 읽어요 · 길이는 어림이에요" else "이 차에 음성 엔진이 없어 개발 서버 음성으로 읽어요",
+            if (m.kind != "voice") addView(text(if (Engine.ttsReady) "기계음으로 읽어요 · 길이는 어림이에요" else if (BuildConfig.STANDALONE) "이 차에 음성 엔진이 없어 글로 보여 드려요 (실차는 기계음으로 읽어요)" else "이 차에 음성 엔진이 없어 개발 서버 음성으로 읽어요",
                 20f, MUTED).apply { gravity = Gravity.CENTER })
         }
     }.also {
@@ -2043,6 +2045,18 @@ class MainActivity : Activity(), Engine.Ui {
             button("모임 통째로 지우기", rounded(MEMBER_COLORS["red"] ?: ACCENT), Color.WHITE) { deleteCircle() },
         ))
         root.addView(label("모임을 지우면 모든 프로필·메시지·목소리·사진·일기와 연결된 차·폰이 지워지고 되돌릴 수 없어요."))
+
+        if (BuildConfig.STANDALONE) {
+            root.addView(section(R.drawable.ic_settings, "시연"))
+            root.addView(label("앱만으로 동작하는 시연 버전이에요. 가족·친구와 안부는 이 차 안에만 있어요. 남기기의 「보내는 사람」을 엄마·누나 등으로 바꾸면 민수에게 온 안부처럼 시험할 수 있어요."))
+            root.addView(row(secondary("시연 데이터로 되돌리기") {
+                confirm("시연 데이터로 되돌릴까요?", "남긴 안부·들은 기록·설정한 모임이 모두 처음 시연 상태로 돌아가요.", "되돌리기") {
+                    toast("처음 상태로 되돌리는 중이에요…")
+                    history.clear(); screen = Screen.HOME
+                    Engine.resetDemo { toast("시연 데이터로 되돌렸어요"); render() }
+                }
+            }))
+        }
     }
 
     /** 모임 통째로 지우기. 되돌릴 수 없어서 두 번 묻는다. */

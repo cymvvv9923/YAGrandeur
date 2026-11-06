@@ -75,7 +75,11 @@ object Api {
     /** 서버가 닿는지 (열쇠 없이) */
     fun ping(done: (Boolean) -> Unit) = call("GET", "/privacy.html", null, k = null) { done(it != null) }
 
-    fun mediaUrl(path: String) = if (path.startsWith("http")) path else base + path
+    fun mediaUrl(path: String) = when {
+        path.startsWith("http") -> path
+        BuildConfig.STANDALONE -> LocalServer.mediaFile(path).absolutePath // 이 차 안의 파일
+        else -> base + path
+    }
 
     fun loadCircle(circleId: String, k: String? = key, done: (Circle?) -> Unit) = call("GET", "/api/circles/$circleId", null, k = k) { body ->
         done(body?.let { parseCircle(JSONObject(it)) })
@@ -239,6 +243,14 @@ object Api {
     /** keepError=true면 실패 응답 본문도 넘긴다(오류 문구 표시용). */
     private fun call(method: String, path: String, body: JSONObject?, keepError: Boolean = false, k: String? = key, done: (String?) -> Unit) {
         io.execute {
+            // 앱만 버전: 네트워크 대신 앱 안 서버로 (같은 주소, 같은 JSON)
+            if (BuildConfig.STANDALONE) {
+                val r = LocalServer.handle(method, path, body, k)
+                if (r.code == 401 && k != null) main.post { onUnauthorized?.invoke(k) }
+                val ok = r.code in 200..299
+                main.post { done(if (ok || keepError) r.body else null) }
+                return@execute
+            }
             val result = try {
                 val conn = URL(base + path).openConnection() as HttpURLConnection
                 conn.requestMethod = method
@@ -313,7 +325,10 @@ object Photos {
     fun get(url: String, onLoaded: () -> Unit): android.graphics.Bitmap? {
         if (cache.containsKey(url)) return cache[url]
         if (loading.add(url)) io.execute {
-            val bmp = runCatching { URL(Api.mediaUrl(url)).openStream().use { android.graphics.BitmapFactory.decodeStream(it) } }.getOrNull()
+            val bmp = runCatching {
+                if (BuildConfig.STANDALONE) android.graphics.BitmapFactory.decodeFile(Api.mediaUrl(url))
+                else URL(Api.mediaUrl(url)).openStream().use { android.graphics.BitmapFactory.decodeStream(it) }
+            }.getOrNull()
             main.post { cache[url] = bmp; loading.remove(url); if (bmp != null) onLoaded() }
         }
         return null
