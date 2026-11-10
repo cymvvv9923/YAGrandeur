@@ -4,37 +4,42 @@
       "id": "home",
       "name": "우리집",
       "type": "family",
-      "inviteCode": "demo-home",
+      "inviteCode": "demo-home-all",
       "members": [
         {
           "id": "dad",
           "name": "아빠",
           "title": "아빠",
-          "color": "blue"
+          "color": "blue",
+          "code": "demo-dad"
         },
         {
           "id": "mom",
           "name": "엄마",
           "title": "엄마",
-          "color": "pink"
+          "color": "pink",
+          "code": "demo-mom"
         },
         {
           "id": "jiyeon",
           "name": "지연",
           "title": "누나",
-          "color": "purple"
+          "color": "purple",
+          "code": "demo-jiyeon"
         },
         {
           "id": "minsu",
           "name": "민수",
           "title": "",
-          "color": "green"
+          "color": "green",
+          "code": "demo-home"
         },
         {
           "id": "seojin",
           "name": "서진",
           "title": "막내",
-          "color": "orange"
+          "color": "orange",
+          "code": "demo-seojin"
         }
       ]
     },
@@ -42,31 +47,35 @@
       "id": "friends",
       "name": "대학 동기",
       "type": "friends",
-      "inviteCode": "demo-friends",
+      "inviteCode": "demo-friends-all",
       "members": [
         {
           "id": "f_minsu",
           "name": "민수",
           "title": "",
-          "color": "green"
+          "color": "green",
+          "code": "demo-friends"
         },
         {
           "id": "f_jun",
           "name": "준호",
           "title": "",
-          "color": "teal"
+          "color": "teal",
+          "code": "demo-f-jun"
         },
         {
           "id": "f_hana",
           "name": "하나",
           "title": "",
-          "color": "pink"
+          "color": "pink",
+          "code": "demo-f-hana"
         },
         {
           "id": "f_tae",
           "name": "태호",
           "title": "",
-          "color": "purple"
+          "color": "purple",
+          "code": "demo-f-tae"
         }
       ]
     }

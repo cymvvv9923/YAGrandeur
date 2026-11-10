@@ -46,7 +46,7 @@
         </intent>
     </queries>
     <application
-        android:label="길 위의 안부"
+        android:label="다온"
         android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
         <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask">
@@ -73,8 +73,31 @@
                 <action android:name="SAVE_SPOT" />
                 <action android:name="UNDO_SPOT" />
                 <action android:name="COUNT_SPOTS" />
+                <action android:name="LEAVE_DAON" />
+                <action android:name="LEAVE_ROAD_NOTE" />
+                <action android:name="ai.gilwi.anbu.SAVE_SPOT" />
+                <action android:name="ai.gilwi.anbu.UNDO_SPOT" />
+                <action android:name="ai.gilwi.anbu.LEAVE_DAON" />
+                <action android:name="ai.gilwi.anbu.LEAVE_ROAD_NOTE" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </receiver>
+        <!-- schema.json의 component "service": Gleo는 기능 이름을 action으로 이 서비스를 부른다 -->
+        <service android:name=".GleoActionService" android:exported="true" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Handles voice commands from the Gleo car assistant, such as saving a spot or pinning a note, then stops." />
+            <intent-filter>
+                <action android:name="SAVE_SPOT" />
+                <action android:name="UNDO_SPOT" />
+                <action android:name="COUNT_SPOTS" />
+                <action android:name="LEAVE_DAON" />
+                <action android:name="LEAVE_ROAD_NOTE" />
+                <action android:name="ai.gilwi.anbu.SAVE_SPOT" />
+                <action android:name="ai.gilwi.anbu.UNDO_SPOT" />
+                <action android:name="ai.gilwi.anbu.LEAVE_DAON" />
+                <action android:name="ai.gilwi.anbu.LEAVE_ROAD_NOTE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

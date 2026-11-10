@@ -24,14 +24,14 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * 길 위의 안부 차량 앱 화면. 정차 중 설정·입력과 재생 화면만 맡는다.
+ * 다온(DAON) 차량 앱 화면. 정차 중 설정·입력과 재생 화면만 맡는다.
  * - 기어·위치·근처 계산·재생은 Engine(AnbuService)이 뒤에서 한다. 운전 중엔 내비가 앞에 있어도 된다.
  * - 운전 중에는 정보만 보여 주고 조작 화면은 열지 않는다.
  */
 class MainActivity : Activity(), Engine.Ui {
 
     /** HOME은 메인 지도. TODAY는 예전 홈(모임 얼굴 줄·모아 듣기·기다리는 메시지·소식 요약) */
-    private enum class Screen { HOME, TODAY, PLAY, SETTINGS, MEMBERS, LEAVE, FEED }
+    private enum class Screen { HOME, TODAY, PLAY, SETTINGS, MEMBERS, LEAVE, FEED, DEMO }
 
     /** 메시지 남기기 화면에서 고르는 값 */
     private data class Place(val name: String, val lat: Double, val lon: Double)
@@ -46,10 +46,11 @@ class MainActivity : Activity(), Engine.Ui {
     private var leaveTo: List<String> = emptyList()
     /** 답장이면 원래 메시지 */
     private var leaveReplyTo: PlaceMessage? = null
-    /** 시간대 (WHEN_HOURS의 키) · 요일 (WHEN_DAYS) · 언제부터 (WHEN_FROM) · 횟수 (once·always·weekly) */
+    /** 시간대 (WHEN_HOURS의 키) · 요일 (WHEN_DAYS) · 언제부터 (WHEN_FROM) · 언제까지 (WHEN_UNTIL) · 횟수 (once·always·weekly) */
     private var leaveHours = "any"
     private var leaveDays = "any"
     private var leaveFrom = "now"
+    private var leaveUntil = "forever"
     private var leaveRepeat = "once"
     private var leaveText = ""
     /** 남기기 단계 (leaveSteps의 몇 번째인지) */
@@ -75,6 +76,8 @@ class MainActivity : Activity(), Engine.Ui {
     private var dialog: AlertDialog? = null
     /** 설정에 보여 줄 초대 코드 (설정을 열 때 받는다) */
     private var inviteCode: String? = null
+    /** 설정의 「초대」: 사람마다 내 코드 */
+    private var invitees: List<Api.Invitee>? = null
     /** 발견 지도. 지도 화면에서만 있다 (위치가 바뀔 때마다 다시 만들면 확대·이동이 풀린다) */
     /** 남기기 「지도에서 고르기」 지도. 남기기 화면에 있는 동안 같은 지도를 쓴다 */
     private var pickMapView: org.maplibre.android.maps.MapView? = null
@@ -99,6 +102,9 @@ class MainActivity : Activity(), Engine.Ui {
     private var selMessage: PlaceMessage? = null
     /** 상황별 안부에서 펼친 조건 */
     private var openCondition: String? = null
+    /** 들은 안부: 고른 칸 (all 전체 · cond 상황별 · place 장소) · 다 펼쳤는지 */
+    private var heardTab = "all"
+    private var heardMore = false
     /** 지도 그림을 다시 그려야 하는지 가리는 값 (데이터가 그대로면 다시 그리지 않는다) */
     private var mapSig = ""
     /** 메시지 id → (시·도, 시·군·구). 경계 안에 있는지 계산은 한 번만 */
@@ -152,7 +158,7 @@ class MainActivity : Activity(), Engine.Ui {
             setBackgroundColor(BG)
             addView(rail, LinearLayout.LayoutParams(dp(150), -1))
             // 내용이 짧으면 화면 높이를 꽉 채운다 (홈은 카드가 남은 높이를 나눠 갖는다)
-            addView(PageScroll(this@MainActivity).apply { isFillViewport = true; addView(root, android.widget.FrameLayout.LayoutParams(-1, -1)) }.also { page = it },
+            addView(PageScroll(this@MainActivity).apply { isFillViewport = true; isScrollbarFadingEnabled = false; isVerticalScrollBarEnabled = true; addView(root, android.widget.FrameLayout.LayoutParams(-1, -1)) }.also { page = it },
                 LinearLayout.LayoutParams(0, -1, 1f))
         })
 
@@ -329,7 +335,7 @@ class MainActivity : Activity(), Engine.Ui {
     private fun render() {
         if (!::root.isInitialized) return
         // 설정·입력 화면에 있는 동안은 자동 재생을 미룬다
-        Engine.uiBusy = screen != Screen.HOME && screen != Screen.PLAY
+        Engine.uiBusy = screen != Screen.HOME && screen != Screen.PLAY && screen != Screen.DEMO // 시연 메뉴에서는 열리면 바로 들려준다
         playKey = null // renderPlay가 다시 정한다
         pickShown = false
         if (screen != Screen.LEAVE) dropPickMap()
@@ -351,6 +357,7 @@ class MainActivity : Activity(), Engine.Ui {
             Screen.MEMBERS -> renderMembers()
             Screen.LEAVE -> renderLeave()
             Screen.FEED -> renderFeed()
+            Screen.DEMO -> renderDemo()
         }
     }
 
@@ -426,7 +433,7 @@ class MainActivity : Activity(), Engine.Ui {
         if (!show) return false
         // 모임 관리는 설정 안에 있다
         val current = if (screen == Screen.MEMBERS) Screen.SETTINGS else screen
-        RAIL.forEach { (s, icon, name) ->
+        (if (BuildConfig.STANDALONE) RAIL.dropLast(1) + DEMO_RAIL + RAIL.last() else RAIL).forEach { (s, icon, name) ->
             if (s == Screen.SETTINGS) rail.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f)) // 설정은 맨 아래
             rail.addView(railItem(icon, name, s == current) { goTab(s) })
         }
@@ -482,20 +489,16 @@ class MainActivity : Activity(), Engine.Ui {
 
         root.addView(greeting())
         root.addView(space(16))
+        // 가족 얼굴 줄은 두지 않는다 (얻는 정보가 없고, 모임이 여럿일 수 있다). 오늘 들을 것 → 지도 → 모임 소식 순서.
         val left = column().apply {
-            // 남는 높이는 가족 얼굴 칸이 갖는다
-            addView(familyCard(), LinearLayout.LayoutParams(-1, 0, 1f).apply { bottomMargin = dp(16) })
             addView(inboxCard(), panelParams())
-            addView(waitingPanel(), LinearLayout.LayoutParams(-1, -2))
-        }
-        val right = column().apply {
-            addView(mapCard(), panelParams())
-            addView(feedCard(), LinearLayout.LayoutParams(-1, 0, 1f))
+            addView(waitingPanel(), panelParams())
+            addView(mapCard(), LinearLayout.LayoutParams(-1, -2))
         }
         root.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            addView(left, LinearLayout.LayoutParams(0, -1, 3f))
-            addView(right, LinearLayout.LayoutParams(0, -1, 2f).apply { marginStart = dp(16) })
+            addView(left, LinearLayout.LayoutParams(0, -2, 3f))
+            addView(feedCard(), LinearLayout.LayoutParams(0, -1, 2f).apply { marginStart = dp(16) })
         }, LinearLayout.LayoutParams(-1, 0, 1f))
     }
 
@@ -518,7 +521,7 @@ class MainActivity : Activity(), Engine.Ui {
         val hello = when (hour) { in 5..10 -> "좋은 아침이에요"; in 11..16 -> "좋은 오후예요"; in 17..21 -> "좋은 저녁이에요"; else -> "오늘도 수고 많았어요" }
         addView(column().apply {
             addView(text(todayLabel(), 22f, MUTED))
-            addView(text(if (driver != null) "$driver, $hello" else "이 차는 누구 차인가요? 아래에서 얼굴을 눌러 주세요", 36f, INK, bold = true))
+            addView(text(if (driver != null) "$driver, $hello" else "안녕하세요", 36f, INK, bold = true))
         }, LinearLayout.LayoutParams(0, -2, 1f))
         val states = listOfNotNull("정차 중", "비".takeIf { Engine.rainNow }, "밤길".takeIf { Engine.nightNow })
         addView(text(states.joinToString(" · ") + if (!serverOk) " · 서버 연결 안 됨" else "", 22f, ACCENT, weight = 600).apply {
@@ -549,80 +552,6 @@ class MainActivity : Activity(), Engine.Ui {
         if (dot != null) addView(View(context).apply {
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(dot); setStroke(dp(3), CARD) }
         }, android.widget.FrameLayout.LayoutParams(dp(sizeDp / 3), dp(sizeDp / 3), Gravity.END or Gravity.BOTTOM))
-    }
-
-    /**
-     * 모임 얼굴 줄. 초록 점: 오늘 운전함(일기가 올라옴), 파란 점: 내 메시지를 들음.
-     * 차는 한 사람의 차라서 얼굴로 운전자를 바꾸지 않는다. 주인이 아직 없을 때만 눌러서 정하고, 그 밖엔 소식을 연다.
-     */
-    private fun familyCard() = panel().apply {
-        val c = circle
-        val me = store.driverId
-        if (me == null) background = rounded(CHIP, 3, ACCENT)
-        addView(label(c?.name ?: "우리 모임"))
-        if (c == null) { addView(big(if (serverOk) "모임 정보를 불러오는 중이에요" else "서버에 연결되지 않았어요. 이 PC에서 서버(2_start_server.bat)가 켜져 있는지 확인해 주세요")); return@apply }
-        val droveToday = feedDiaries.filter { it.date == store.today }.map { it.memberName }.toSet()
-        val heardMine = feedHeard.filter { it.authorId == me }.map { it.memberName }.toSet()
-        addView(LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(12), 0, dp(4))
-            c.members.forEach { m ->
-                val isMe = m.id == me
-                val dot = when {
-                    isMe && store.todayKm >= 0.1 || m.name in droveToday -> GREEN
-                    !isMe && m.name in heardMine -> BLUE
-                    else -> null
-                }
-                addView(column().apply {
-                    gravity = Gravity.CENTER_HORIZONTAL
-                    addView(avatar(m.name, 104, isMe, dot, m), LinearLayout.LayoutParams(-2, -2)) // 점이 동그라미에 붙도록 폭을 감싼다
-                    addView(text(if (isMe) "나" else m.name, 24f, if (isMe) ACCENT else INK, bold = isMe).apply { gravity = Gravity.CENTER })
-                    background = pressable(GradientDrawable().apply { cornerRadius = dp(16).toFloat(); setColor(Color.TRANSPARENT) })
-                    setPadding(0, dp(8), 0, dp(8))
-                    isClickable = true
-                    setOnClickListener {
-                        if (me == null) confirm("${m.name}님의 차로 할까요?", "이 차에서는 ${m.name}님에게 온 메시지를 들려줘요. 설정에서 바꿀 수 있어요.", "정하기") { chooseOwner(m) }
-                        else openFeed()
-                    }
-                }, LinearLayout.LayoutParams(0, -2, 1f))
-            }
-        }, LinearLayout.LayoutParams(-1, 0, 1f)) // 얼굴 줄이 카드 가운데에 오도록 남은 높이를 차지한다
-        addView(LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            fun legend(color: Int, s: String) {
-                addView(View(context).apply { background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) } }, LinearLayout.LayoutParams(dp(14), dp(14)))
-                addView(text(s, 20f, MUTED).apply { setPadding(dp(8), 0, dp(24), 0) })
-            }
-            legend(GREEN, "오늘 운전")
-            legend(BLUE, "내 메시지 들음")
-            addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))
-            // 주인이 없으면 위 인사에 「얼굴을 눌러 주세요」가 있으니 여기엔 버튼만
-            if (me == null) addView(navButton("목록에 내가 없어요") { addMeAndOwn(c) }, LinearLayout.LayoutParams(dp(300), dp(64)))
-            else addView(text("${store.carName.ifBlank { "이 차" }} · ${c.nameOf(me)}님의 차", 20f, MUTED))
-        })
-    }
-
-    /** 초대로 들어왔는데 모임에 내 프로필이 없을 때: 나를 추가하고 이 차 주인으로 */
-    private fun addMeAndOwn(c: Circle) = askText("내 이름", "") { name ->
-        Api.addMember(c.id, name) { updated, err ->
-            val m = updated?.memberByName(name) ?: return@addMember toast(err ?: "추가하지 못했어요")
-            Engine.circle = updated
-            chooseOwner(m)
-        }
-    }
-
-    private fun chooseOwner(m: Member) = Engine.setOwner(m.id) { ok ->
-        toast(if (ok) "${m.name}님의 차로 정했어요" else "서버에 연결하지 못했어요")
-        render()
-    }
-
-    /** 설정의 「차 주인」 */
-    private fun pickOwner() {
-        val c = circle ?: return
-        if (parked != true) return
-        pickFrom("이 차는 누구 차인가요?", c.members.map { it.name }) { i -> chooseOwner(c.members[i]) }
     }
 
     /** 옆자리에 누가 있어 보낸 사람을 가리는 중인지 */
@@ -684,8 +613,7 @@ class MainActivity : Activity(), Engine.Ui {
             addView(text("${m.authorName}님이 ${m.occasion} 남겼어요", 30f, INK, bold = true))
             if (pending.size > 1) addView(label("그다음 · " + pending.drop(1).joinToString(", ") { "${it.authorName}님" }))
         }, LinearLayout.LayoutParams(0, -2, 1f))
-        addView(if (store.driverId != null) primary("▶ 지금 듣기") { Engine.startPlayback(announce = false) }
-            else primary("↑ 차 주인 먼저") {}, LinearLayout.LayoutParams(dp(260), dp(100)).apply { marginStart = dp(16) })
+        addView(primary("▶ 지금 듣기") { Engine.startPlayback(announce = false) }, LinearLayout.LayoutParams(dp(260), dp(100)).apply { marginStart = dp(16) })
     }
 
     /** 가장 가까운 메시지 장소 한 줄 (홈용으로 짧게) */
@@ -821,7 +749,7 @@ class MainActivity : Activity(), Engine.Ui {
         gravity = Gravity.CENTER_VERTICAL
         val c = circle
         val driver = store.driverId?.let { c?.nameOf(it) }
-        addView(text(driver ?: "차 주인 고르기", 22f, ACCENT, bold = true).apply {
+        addView(text(driver ?: store.carName.ifBlank { "이 차" }, 22f, ACCENT, bold = true).apply {
             background = GradientDrawable().apply { setColor(CHIP); cornerRadius = dp(40).toFloat() }
             setPadding(dp(24), dp(8), dp(24), dp(8))
             if (parked == true) setOnClickListener { home() }
@@ -866,7 +794,7 @@ class MainActivity : Activity(), Engine.Ui {
      */
     private fun renderPair() {
         root.addView(space(24))
-        root.addView(text("길 위의 안부를 시작해요", 44f, INK, bold = true))
+        root.addView(text("다온을 시작해요", 44f, INK, bold = true))
         root.addView(space(8))
         root.addView(text("가족·친구가 각자 자기 차에서, 서로에게 남긴 목소리를 그 길 위에서 들어요", 26f, MUTED))
         root.addView(space(32))
@@ -916,7 +844,7 @@ class MainActivity : Activity(), Engine.Ui {
             val type = CIRCLE_TYPES[i].first
             askText("모임 이름", if (type == "family") "우리집" else "우리 모임", suggestions = CIRCLE_NAME_HINTS.getValue(type)) { circleName ->
                 askText("내 이름 (이 차의 주인)", "") { myName ->
-                    askText("$myName 님의 호칭 (선택)", "", suggestions = TITLE_HINTS.getValue(type), allowBlank = true, okLabel = "다음") { title ->
+                    askText("$myName 님의 호칭 (선택)", "", suggestions = TITLE_HINTS.getValue(type), allowBlank = true, okLabel = "다음", skipLabel = "건너뛰기") { title ->
                         pickColor("$myName 님의 얼굴 색", "blue") { color ->
                             showPrivacy("동의하고 만들기") {
                                 Engine.createCircle(circleName, type, myName, title, color) { err ->
@@ -931,11 +859,11 @@ class MainActivity : Activity(), Engine.Ui {
         }
     }
 
-    /** 초대 코드로 들어가기. 들어가면 홈에서 「나는 누구」를 고른다. */
-    private fun startJoin() = askText("초대 코드 (6자리)", "") { code ->
+    /** 초대 코드로 들어가기: 모임 사람에게 받은 「내 코드」를 넣으면 바로 내 차로 들어온다 (주인을 고르지 않는다) */
+    private fun startJoin() = askText("내 코드 (모임 사람에게 받은 6자리)", "") { code ->
         showPrivacy("동의하고 들어가기") {
             Engine.joinCircle(code) { err ->
-                if (err != null) toast(err) else { toast("「${circle?.name}」에 들어왔어요. 이 차 주인을 골라 주세요"); pickOwner() }
+                if (err != null) toast(err) else toast("「${circle?.name}」에 ${store.driverId?.let { circle?.nameOf(it) }?.let { "${it}님 차로 " } ?: ""}들어왔어요")
                 render()
             }
         }
@@ -1346,7 +1274,11 @@ class MainActivity : Activity(), Engine.Ui {
                 map.addOnMapClickListener { at -> onMainTap(map, at); true }
                 // 빈 곳을 길게 누르면 그 자리에 메시지 남기기
                 map.addOnMapLongClickListener { at ->
-                    confirm("여기에 메시지를 남길까요?", "고른 자리를 모임의 다른 사람이 지나가면 그 사람 차에서 들려줘요.", "남기기") { openLeaveAt(at.latitude, at.longitude) }
+                    if (DEMO_MOVE) pickFrom("이 자리에서", listOf("여기로 이동 (시연)", "여기에 메시지 남기기")) { i ->
+                        if (i == 0) demoMove(at.latitude, at.longitude, Regions.districtOf(at.latitude, at.longitude)?.let { fullName(it) } ?: "고른 곳")
+                        else openLeaveAt(at.latitude, at.longitude)
+                    }
+                    else confirm("여기에 메시지를 남길까요?", "고른 자리를 모임의 다른 사람이 지나가면 그 사람 차에서 들려줘요.", "남기기") { openLeaveAt(at.latitude, at.longitude) }
                     true
                 }
             }
@@ -1583,6 +1515,8 @@ class MainActivity : Activity(), Engine.Ui {
         val at = if (m.isPlace) m.lat to m.lon else store.found.firstOrNull { it.messageId == m.id }?.let { it.lat to it.lon }
         at?.let { flyTo(it.first, it.second, maxOf(14.5, mainLib?.cameraPosition?.zoom ?: 0.0)) }
         refreshMain()
+        // 고른 안부 카드는 오른쪽 칸 위쪽에 생긴다: 아래 목록에서 골랐어도 보이게 맨 위로
+        (mainSide?.parent as? ScrollView)?.post { (mainSide?.parent as? ScrollView)?.smoothScrollTo(0, 0) }
     }
 
     /** 지도에서 길게 누른 자리로 메시지 남기기 */
@@ -1601,22 +1535,103 @@ class MainActivity : Activity(), Engine.Ui {
     private fun refreshSide() {
         val side = mainSide ?: return
         side.removeAllViews()
-        // 이 차 주인을 아직 안 정한 모임
-        store.memberships.filter { it.ownerId == null }.forEach { ms ->
-            val c = Engine.circles[ms.circleId] ?: return@forEach
-            side.addView(panel().apply {
-                background = rounded(CARD, 3, ACCENT)
-                addView(text("${c.name}에서 이 차는 누구 차인가요?", 26f, INK, bold = true))
-                addView(label("주인을 정해야 그 모임 안부를 들려 드려요"))
-                addView(primary("차 주인 고르기") { Engine.switchCircle(c.id); pickOwner() }, LinearLayout.LayoutParams(-1, dp(88)).apply { topMargin = dp(10) })
-            }, panelParams())
-        }
+        // 「이 차는 누구 차인가요?」 카드는 두지 않는다 (주인은 Engine.ensureOwners가 저절로 정한다)
         if (store.spots.isNotEmpty()) side.addView(spotsCard(), panelParams())
         side.addView(waitingPanel(), panelParams())
+        if (DEMO_MOVE && !BuildConfig.STANDALONE) side.addView(demoCard(), panelParams())
         selMessage?.takeIf { m -> visibleMessages().any { it.id == m.id } }?.let { side.addView(selectedCard(it), panelParams()) }
         selRegion?.let { side.addView(regionCard(it), panelParams()) }
         side.addView(conditionCard(), panelParams())
+        side.addView(heardCard(), panelParams())
         side.addView(filterCard(), panelParams())
+    }
+
+    /**
+     * 시연: 실제로 달리지 않고 차를 옮기거나 시동·주차한 것처럼. 앱 안의 위치만 바뀐다(기본 내비 화면은 그대로).
+     * 안부 장소로 옮기면 그 안부가 열려 재생 화면이 뜨고, 그 자리에서 바로 남길 수도 있다.
+     */
+    private fun demoCard() = panel().apply {
+        background = rounded(CARD, 2, BORDER)
+        val at = Engine.demoLocation
+        addView(LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(icon(R.drawable.ic_car, 40, ACCENT), LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(14) })
+            addView(column().apply {
+                addView(text("시연 · 차 움직여 보기", 28f, INK, bold = true))
+                addView(label(if (at != null) "시간·요일 조건은 건너뛰어요 · 지금 시연 위치: ${demoPlaceName ?: Regions.districtOf(at.first, at.second)?.let { fullName(it) } ?: "고른 곳"}"
+                    else "달리지 않고 안부 장소로 옮겨 볼 수 있어요. 지도를 길게 눌러도 돼요"))
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+        })
+        addView(row(
+            primary("안부 장소로 이동") { pickDemoPlace() },
+            secondary(if (at != null) "실제 위치로" else "지도 가운데로") {
+                if (at != null) { Engine.setDemoLocation(null); demoPlaceName = null; toast("실제 위치(GPS)로 돌아왔어요"); refreshMain() }
+                else mainLib?.cameraPosition?.target?.let { t -> demoMove(t.latitude, t.longitude, Regions.districtOf(t.latitude, t.longitude)?.let { fullName(it) } ?: "지도 가운데") }
+            },
+        ).apply { layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) } })
+        addView(row(
+            secondary("시동 걸기") { demoResult(Engine.demoStart(), "시동 걸 때") },
+            secondary("도착해 세우기") { demoResult(Engine.demoPark(), "도착해 차를 세울 때") },
+        ))
+    }
+
+    private fun demoResult(n: Int, name: String) =
+        toast(if (n > 0) "「$name」 안부 ${n}개가 열렸어요" else "지금 열 「$name」 안부가 없어요 (한 번만 듣는 안부는 이미 들었으면 「들은 안부」에서 다시 들어요)")
+
+    /** 시연 위치 이름 (고른 안부 장소 이름) */
+    private var demoPlaceName: String? = null
+    /** 「가족에게 가기」로 옮겨 간 사람 (옮긴 뒤 「여기서 ○○에게 남기기」의 받는 사람) */
+    private var demoTarget: Member? = null
+
+    /** "지연(누나)" · "아빠" */
+    private fun who(m: Member) = if (m.title.isNotBlank() && m.title != m.name) "${m.name}(${m.title})" else m.name
+
+    /** 그 사람이 남긴 장소 안부 중 가장 최근 것 (그 사람이 있는 쪽으로 보는 자리). 위치는 서버로 보내지 않으므로 안부 장소를 쓴다. */
+    private fun familySpot(m: Member): PlaceMessage? =
+        visibleMessages().filter { it.isPlace && it.authorId == m.id && it.circleId == circle?.id }.lastOrNull()
+
+    /** 시연: 그 사람의 자리로 옮긴다. 그 자리 안부가 아직 안 들은 것이면 Engine이 바로 들려준다. */
+    private fun demoGoTo(m: Member, spot: PlaceMessage) {
+        demoTarget = m
+        demoMove(spot.lat, spot.lon, spot.placeName)
+        render()
+    }
+
+    /** 시연: 지금 자리 근처의 나에게 온 안부를 (이미 들었어도) 다시 들려준다 */
+    private fun demoListenHere(at: Pair<Double, Double>) {
+        val here = visibleMessages().filter { it.isPlace && !isMine(it) && distanceM(at.first, at.second, it.lat, it.lon) <= maxOf(it.radiusM, 300.0) }
+            .sortedBy { distanceM(at.first, at.second, it.lat, it.lon) }
+        if (here.isEmpty()) { toast("이 자리에 남은 안부가 없어요"); return }
+        Engine.replay(here.first())
+    }
+
+    /** 시연: 지금 자리에 그 사람에게 남기기. 장소·받는 사람을 채운 채 「내용」 단계로 바로 간다. */
+    private fun demoLeaveHere(m: Member, at: Pair<Double, Double>) {
+        goTab(Screen.LEAVE)
+        leaveWhen = "place"
+        leaveKey = MAP_PICK
+        leavePlace = Place(demoPlaceName ?: "여기", at.first, at.second)
+        leaveMapCenter = org.maplibre.android.geometry.LatLng(at.first, at.second)
+        leaveTo = listOf(m.id)
+        leaveStep = 2
+        render()
+    }
+
+    /** 시연: 나에게 온 장소 안부 중에서 골라 그 자리로 */
+    private fun pickDemoPlace() {
+        val places = visibleMessages().filter { it.isPlace && !isMine(it) }.distinctBy { it.placeName }.sortedBy { it.placeName }
+        if (places.isEmpty()) { toast("나에게 온 장소 안부가 없어요"); return }
+        val ids = foundIds()
+        pickFrom("어디로 가 볼까요?", places.map { m -> m.placeName + if (m.id in ids) " · 들음" else "" }) { i -> demoMove(places[i].lat, places[i].lon, places[i].placeName) }
+    }
+
+    private fun demoMove(lat: Double, lon: Double, name: String) {
+        demoPlaceName = name
+        Engine.setDemoLocation(lat to lon)
+        flyTo(lat, lon, maxOf(14.5, mainLib?.cameraPosition?.zoom ?: 0.0))
+        toast("「$name」(으)로 옮겼어요 · 이 근처 안부가 있으면 들려 드려요")
+        if (screen == Screen.HOME) refreshMain()
     }
 
     /** 주행 중 말로 저장한 곳: 하나씩 「안부 남기기」 또는 지우기 */
@@ -1639,7 +1654,7 @@ class MainActivity : Activity(), Engine.Ui {
                 setPadding(0, dp(12), 0, 0)
                 addView(column().apply {
                     addView(text(sp.memo.ifBlank { spotPlaceName(sp) }, 24f, INK, weight = 600).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
-                    addView(text(spotWhen(sp) + spotConditions(sp), 20f, MUTED).apply { maxLines = 1 })
+                    addView(text(listOfNotNull(Engine.circles[sp.circleId]?.name, spotWhen(sp)).joinToString(" · ") + spotConditions(sp), 20f, MUTED).apply { maxLines = 1 })
                 }, LinearLayout.LayoutParams(0, -2, 1f))
                 // 줄을 누르면 지도가 그 자리로
                 isClickable = true
@@ -1676,6 +1691,12 @@ class MainActivity : Activity(), Engine.Ui {
         leavePlace = Place(sp.memo.ifBlank { sp.address.ifBlank { Regions.districtOf(sp.lat, sp.lon)?.name ?: "저장한 곳" } }, sp.lat, sp.lon)
         leaveMapCenter = org.maplibre.android.geometry.LatLng(sp.lat, sp.lon)
         leaveSpotId = sp.id
+        // 저장할 때 고른 그룹으로 남긴다 (보내는 사람은 그 그룹에서의 이 차 주인)
+        Engine.circles[sp.circleId]?.takeIf { store.keyOf(it.id) != null }?.let { g ->
+            leaveCircleId = g.id
+            leaveAuthor = store.ownerOf(g.id) ?: leaveAuthor
+            leaveTo = emptyList()
+        }
         leaveStep = 2
         render()
     }
@@ -1707,6 +1728,8 @@ class MainActivity : Activity(), Engine.Ui {
                 LinearLayout.LayoutParams(0, dp(80), 1f).apply { marginEnd = dp(10) })
             addView(secondary("여기로 안내") { if (!Engine.routeTo(m.lat, m.lon, m.placeName)) toast("내비에 연결하지 못했어요") },
                 LinearLayout.LayoutParams(0, dp(80), 1f))
+            if (DEMO_MOVE) addView(secondary("여기로 이동") { demoMove(m.lat, m.lon, m.placeName) },
+                LinearLayout.LayoutParams(0, dp(80), 1f).apply { marginStart = dp(10) })
             layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) }
         })
     }
@@ -1757,37 +1780,66 @@ class MainActivity : Activity(), Engine.Ui {
         setOnClickListener { focusMessage(m) }
     }
 
-    /** 상황별 안부: 장소 없이 차 상태로 열리는 안부(비·밤길·옆자리·차에 탈 때). 조건이 늘어도 목록이 저절로 는다. */
+    /**
+     * 상황별 안부: 아직 못 들은 것만. 장소 없이 차 상태로 열리는 안부(비·밤길·옆자리·차에 탈 때…).
+     * 내용과 보낸 사람은 숨기고(그 상황이 됐을 때 깜짝) 개수와 모임만. 들은 것은 「들은 안부」에.
+     */
     private fun conditionCard() = panel().apply {
         val ids = foundIds()
-        val list = visibleMessages().filter { !it.isPlace && !isMine(it) }
-        addView(text("상황별 안부", 28f, INK, bold = true))
-        addView(label("지도에 자리가 없는 안부예요. 그 상황이 되면 들려 드려요"))
+        val waiting = visibleMessages().filter { !it.isPlace && !isMine(it) && it.id !in ids }
+        addView(text("상황별 안부 · 기다리는 것", 28f, INK, bold = true))
+        addView(label(if (waiting.isEmpty()) "기다리는 상황별 안부가 없어요. 들은 안부는 아래 「들은 안부」에 있어요"
+            else "아직 못 들은 안부예요. 그 상황이 되면 들려 드려요"))
         WHEN_OPTIONS.filter { it.first != "place" }.forEach { (key, name) ->
-            val ms = list.filter { it.opensOn == key }
-            val f = ms.count { it.id in ids }
-            val open = openCondition == key
+            val ms = waiting.filter { it.opensOn == key }
+            val open = openCondition == key && ms.isNotEmpty()
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(4), dp(14), dp(4), dp(14))
                 addView(icon(WHEN_ICONS.getValue(key), 40, if (ms.isNotEmpty()) ACCENT else MUTED), LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(16) })
                 addView(column().apply {
-                    addView(text(name, 24f, INK, weight = 600))
+                    addView(text(name, 24f, if (ms.isNotEmpty()) INK else MUTED, weight = 600))
                     addView(label(WHEN_HINTS.getValue(key)))
                 }, LinearLayout.LayoutParams(0, -2, 1f))
-                addView(text(if (ms.isEmpty()) "없음" else "$f / ${ms.size}", 24f, if (ms.isEmpty()) MUTED else ACCENT, bold = true))
-                addView(text(if (open) "  ▲" else "  ▼", 20f, MUTED))
-                isClickable = true
-                background = pressable(GradientDrawable().apply { cornerRadius = dp(12).toFloat(); setColor(if (open) CHIP else Color.TRANSPARENT) })
-                setOnClickListener { openCondition = if (open) null else key; refreshSide() }
+                addView(text(if (ms.isEmpty()) "없음" else "${ms.size}개", 24f, if (ms.isEmpty()) MUTED else ACCENT, bold = true))
+                if (ms.isNotEmpty()) addView(text(if (open) "  ▲" else "  ▼", 20f, MUTED))
+                if (ms.isNotEmpty()) {
+                    isClickable = true
+                    background = pressable(GradientDrawable().apply { cornerRadius = dp(12).toFloat(); setColor(if (open) CHIP else Color.TRANSPARENT) })
+                    setOnClickListener { openCondition = if (open) null else key; refreshSide() }
+                }
             })
             if (open) {
-                ms.filter { it.id in ids }.forEach { m -> addView(messageRow(m)) }
-                val left = ms.count { it.id !in ids }
-                if (left > 0) addView(label("아직 못 들은 「$name」 안부 ${left}개 · ${ms.filter { it.id !in ids }.map { Engine.circles[it.circleId]?.name }.distinct().joinToString(", ")}"))
+                val byCircle = ms.groupBy { Engine.circles[it.circleId]?.name ?: "모임" }.map { (c, l) -> "$c ${l.size}개" }.joinToString(" · ")
+                addView(label("「$name」 안부 ${ms.size}개가 기다려요 · $byCircle · 누가 남겼는지는 들을 때 알려 드려요").apply { setPadding(dp(60), 0, 0, dp(10)) })
             }
         }
+    }
+
+    /** 들은 안부: 이 차가 이미 들은 안부를 모아 다시 듣기 (전체 · 상황별 · 장소) */
+    private fun heardCard() = panel().apply {
+        val ids = foundIds()
+        val heard = visibleMessages().filter { !isMine(it) && it.id in ids }
+        val list = when (heardTab) { "cond" -> heard.filter { !it.isPlace }; "place" -> heard.filter { it.isPlace }; else -> heard }
+            .sortedByDescending { m -> feedHeard.filter { it.messageId == m.id }.maxOfOrNull { it.at } ?: "" }
+        addView(text("들은 안부 ${heard.size}개", 28f, INK, bold = true))
+        addView(label("누르면 지도와 위 칸에서 다시 듣고 답장할 수 있어요"))
+        addView(LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            listOf("all" to "전체 ${heard.size}", "cond" to "상황별 ${heard.count { !it.isPlace }}", "place" to "장소 ${heard.count { it.isPlace }}").forEachIndexed { i, (k, n) ->
+                val on = heardTab == k
+                addView(button(n, if (on) rounded(ACCENT) else rounded(SOFT), if (on) Color.WHITE else INK) { heardTab = k; heardMore = false; refreshSide() }
+                    .apply { textSize = 20f; minHeight = dp(64) },
+                    LinearLayout.LayoutParams(0, dp(64), 1f).apply { if (i > 0) marginStart = dp(8) })
+            }
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10); bottomMargin = dp(4) }
+        })
+        if (list.isEmpty()) addView(label("아직 들은 안부가 없어요"))
+        val shown = if (heardMore) list else list.take(HEARD_PREVIEW)
+        shown.forEach { m -> addView(messageRow(m)) }
+        if (list.size > HEARD_PREVIEW) addView(secondary(if (heardMore) "접기" else "${list.size - HEARD_PREVIEW}개 더 보기") { heardMore = !heardMore; refreshSide() },
+            LinearLayout.LayoutParams(-1, dp(72)).apply { topMargin = dp(6) })
     }
 
     /** 보기: 모임마다 켜고 끄기(모임 색), 그 안에서 사람마다 켜고 끄기 */
@@ -1966,7 +2018,7 @@ class MainActivity : Activity(), Engine.Ui {
                     addView(big((c?.name ?: "불러오는 중…") + if (ms.circleId == store.activeCircleId) "  (관리 중)" else ""))
                     addView(label("${CIRCLE_TYPES.firstOrNull { it.first == c?.type }?.second ?: ""} · 이 차 주인: ${ms.ownerId?.let { c?.nameOf(it) } ?: "아직 없음"} · ${ms.carName}"))
                 }, LinearLayout.LayoutParams(0, -2, 1f))
-                if (ms.circleId != store.activeCircleId) addView(navButton("이 모임 관리") { Engine.switchCircle(ms.circleId); inviteCode = null; render() })
+                if (ms.circleId != store.activeCircleId) addView(navButton("이 모임 관리") { Engine.switchCircle(ms.circleId); inviteCode = null; invitees = null; render() })
             })
         }
         root.addView(row(secondary("+ 다른 모임 더하기") {
@@ -1976,13 +2028,11 @@ class MainActivity : Activity(), Engine.Ui {
         val owner = store.driverId?.let { circle?.nameOf(it) }
         root.addView(section(R.drawable.ic_car, "이 차"))
         root.addView(label("${circle?.name ?: "모임"}에 연결된 ${owner?.let { "${it}님의 " } ?: ""}차예요. 이 차에서는 주인에게 온 메시지를 들려주고, 주인이 남긴 메시지는 틀지 않아요."))
+        // 차 주인은 들어올 때 쓴 「내 코드」로 정해진다 (고르지 않는다)
         root.addView(row(
-            secondary("차 주인: ${owner ?: "고르기"}") { pickOwner() },
             secondary("차 이름: ${store.carName.ifBlank { "우리 차" }}") {
                 askText("이 차 이름", store.carName) { name -> Engine.renameCar(name) { ok -> if (!ok) toast("바꾸지 못했어요") } }
             },
-        ))
-        root.addView(row(
             secondary("모임 관리") { openMembers() },
             secondary("이 차 연결 끊기") {
                 confirm("이 차를 ${circle?.name ?: "모임"}에서 뺄까요?", "다시 쓰려면 초대 코드로 들어오면 돼요. 모임 사람들이 남긴 메시지는 지워지지 않아요.", "연결 끊기") {
@@ -1991,24 +2041,29 @@ class MainActivity : Activity(), Engine.Ui {
             },
         ))
 
-        root.addView(section(R.drawable.ic_people, "초대"))
-        root.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = rounded(CARD, 1, BORDER)
-            setPadding(dp(28), dp(16), dp(16), dp(16))
-            addView(column().apply {
-                addView(label("이 코드를 알려 주면 그 사람 차나 폰에서 ${circle?.name ?: "모임"}에 들어와요"))
-                addView(text(inviteCode?.let { if (it.length == 6) "${it.take(3)} ${it.drop(3)}" else it } ?: "불러오는 중…", 56f, INK, bold = true).apply { letterSpacing = 0.08f })
-            }, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(navButton("새 코드 만들기") {
-                confirm("새 초대 코드를 만들까요?", "예전 코드로는 더 들어올 수 없어요. 이미 들어온 사람은 그대로예요.", "새로 만들기") {
-                    Api.invite(reset = true) { code -> if (code != null) { inviteCode = code; render() } else toast("서버에 연결하지 못했어요") }
-                }
-            }, LinearLayout.LayoutParams(dp(260), dp(80)))
-            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) }
-        })
-        if (inviteCode == null) Api.invite { code -> if (code != null) { inviteCode = code; if (screen == Screen.SETTINGS) render() } }
+        root.addView(section(R.drawable.ic_people, "초대 · 사람마다 내 코드"))
+        root.addView(label("그 사람 차에서 「초대 코드로 들어가기」에 자기 코드를 넣으면, 바로 그 사람 차로 ${circle?.name ?: "모임"}에 들어와요. 누구 차인지 고를 필요가 없어요."))
+        val people = invitees
+        if (people == null) root.addView(label("불러오는 중…"))
+        people?.filter { it.id != store.driverId }?.forEach { p ->
+            root.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = rounded(CARD, 1, BORDER)
+                setPadding(dp(24), dp(10), dp(12), dp(10))
+                addView(avatar(p.name, 56, member = circle?.member(p.id)), LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(16) })
+                addView(text(p.name, 26f, INK, weight = 600), LinearLayout.LayoutParams(dp(220), -2))
+                addView(text(p.code.uppercase().let { if (it.length == 6) "${it.take(3)} ${it.drop(3)}" else it }, 36f, INK, bold = true).apply { letterSpacing = 0.06f },
+                    LinearLayout.LayoutParams(0, -2, 1f))
+                addView(navButton("새 코드") {
+                    confirm("${p.name}님 코드를 새로 만들까요?", "예전 코드로는 더 들어올 수 없어요. 이미 들어온 차는 그대로예요.", "새로 만들기") {
+                        Api.invitees(resetFor = p.id) { l -> if (l != null) { invitees = l; render() } else toast("서버에 연결하지 못했어요") }
+                    }
+                }, LinearLayout.LayoutParams(dp(170), dp(72)))
+                layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) }
+            })
+        }
+        if (people == null) Api.invitees { l -> if (l != null) { invitees = l; if (screen == Screen.SETTINGS) render() } }
 
         root.addView(section(R.drawable.ic_shield, "옆자리 배려"))
         root.addView(toggle("옆자리에 누가 있으면 먼저 물어보기", store.askWithPassenger) { store.askWithPassenger = it; Engine.maybeAutoPlay() })
@@ -2049,17 +2104,101 @@ class MainActivity : Activity(), Engine.Ui {
         ))
         root.addView(label("모임을 지우면 모든 프로필·메시지·목소리·사진·일기와 연결된 차·폰이 지워지고 되돌릴 수 없어요."))
 
-        if (BuildConfig.STANDALONE) {
-            root.addView(section(R.drawable.ic_settings, "시연"))
-            root.addView(label("앱만으로 동작하는 시연 버전이에요. 가족·친구와 안부는 이 차 안에만 있어요. 남기기의 「보내는 사람」을 엄마·누나 등으로 바꾸면 민수에게 온 안부처럼 시험할 수 있어요."))
-            root.addView(row(secondary("시연 데이터로 되돌리기") {
-                confirm("시연 데이터로 되돌릴까요?", "남긴 안부·들은 기록·설정한 모임이 모두 처음 시연 상태로 돌아가요.", "되돌리기") {
-                    toast("처음 상태로 되돌리는 중이에요…")
-                    history.clear(); screen = Screen.HOME
-                    Engine.resetDemo { toast("시연 데이터로 되돌렸어요"); render() }
-                }
-            }))
+        if (BuildConfig.STANDALONE) root.addView(label("시연 동작과 「시연 데이터로 되돌리기」는 왼쪽 메뉴의 「시연」에 있어요."))
+    }
+
+    /**
+     * 앱만 버전의 「시연」 메뉴: 실제로 달리지 않고 차를 옮기고, 차 신호(시동·문·와이퍼·전조등·조수석·경고등)를 받은 것처럼 한다.
+     * 나머지 메뉴는 서버 버전과 똑같이 쓰고, 시연에 필요한 것은 모두 여기에만 둔다.
+     */
+    private fun renderDemo() {
+        root.addView(title("시연"))
+        root.addView(label("실제로 달리지 않고 차를 옮기거나 차 상태를 바꿔 봐요. 실차에서는 차 신호로 저절로 돼요. 시연에서는 안부의 시간·요일 조건을 건너뛰어요."))
+        val ids = foundIds()
+        val at = Engine.demoLocation
+
+        // 주행 없이 시연: 가족에게 가기 → 그 자리 안부 듣기 또는 그 자리에 남기기
+        val c = circle
+        val me = store.driverId
+        root.addView(section(R.drawable.ic_people, "가족에게 가기"))
+        root.addView(label("달리지 않고 그 사람이 안부를 남긴 자리로 바로 옮겨요. 옮긴 뒤 그 자리 안부를 듣거나, 그 사람에게 남길 수 있어요."))
+        val family = c?.members?.filter { it.id != me }?.mapNotNull { m -> familySpot(m)?.let { m to it } }.orEmpty()
+        if (family.isEmpty()) root.addView(label("가족이 남긴 장소 안부가 없어요"))
+        family.chunked(3).forEach { line ->
+            root.addView(row(*(line.map { (m, spot) ->
+                val label = "${who(m)} · ${spot.placeName}"
+                if (demoTarget?.id == m.id && demoPlaceName == spot.placeName) primary("● $label") { demoGoTo(m, spot) }
+                else secondary(label) { demoGoTo(m, spot) }
+            } + List(3 - line.size) { View(this) }).toTypedArray()))
         }
+        val target = demoTarget
+        if (at != null && target != null) {
+            root.addView(card(listOf(
+                label("지금 시연 위치"),
+                big("${who(target)} 쪽 · ${demoPlaceName ?: "고른 곳"}"),
+            )))
+            root.addView(row(
+                primary("▶ 이 자리 안부 듣기") { demoListenHere(at) },
+                secondary("✎ 여기서 ${who(target)}에게 남기기") { demoLeaveHere(target, at) },
+            ))
+        }
+
+        root.addView(section(R.drawable.ic_pin, "어디로 갈까요"))
+        root.addView(label(if (at != null) "지금 시연 위치: ${demoPlaceName ?: Regions.districtOf(at.first, at.second)?.let { fullName(it) } ?: "고른 곳"} · 누르면 그 자리로 옮기고, 그곳 안부가 있으면 바로 들려 드려요"
+            else "지금은 실제 위치(GPS)예요 · 누르면 그 자리로 옮기고, 그곳 안부가 있으면 바로 들려 드려요"))
+        val places = visibleMessages().filter { it.isPlace && !isMine(it) }.distinctBy { it.placeName }.sortedBy { it.placeName }
+        if (places.isEmpty()) root.addView(label("나에게 온 장소 안부가 없어요"))
+        places.chunked(3).forEach { line ->
+            root.addView(row(*(line.map { m ->
+                (if (demoPlaceName == m.placeName) primary("● ${m.placeName}") { demoTarget = null; demoMove(m.lat, m.lon, m.placeName); render() }
+                else secondary(m.placeName + if (m.id in ids) " · 들음" else "") { demoTarget = null; demoMove(m.lat, m.lon, m.placeName); render() })
+            } + List(3 - line.size) { View(this) }).toTypedArray()))
+        }
+        root.addView(row(
+            secondary("메인 지도에서 고르기") { goTab(Screen.HOME); toast("지도를 길게 누르면 그 자리로 옮길 수 있어요") },
+            secondary("실제 위치로") { Engine.setDemoLocation(null); demoPlaceName = null; demoTarget = null; toast("실제 위치(GPS)로 돌아왔어요"); render() }.apply { alpha = if (at != null) 1f else 0.4f },
+        ))
+
+        root.addView(section(R.drawable.ic_car, "차 상태"))
+        root.addView(row(
+            secondary("시동 걸기") { demoResult(Engine.demoStart(), "시동 걸 때") },
+            secondary("차에 타기 (문 열기)") { demoResult(Engine.demoSignal("door"), "차에 탈 때") },
+            secondary("도착해 세우기") { demoResult(Engine.demoPark(), "도착해 차를 세울 때") },
+        ))
+        fun onOff(name: String, on: Boolean, kind: String, cond: String) =
+            (if (on) primary("$name · 켜짐") { Engine.demoSignal(kind, false); render() }
+            else secondary("$name · 꺼짐") { demoResult(Engine.demoSignal(kind, true), cond); render() })
+        root.addView(row(
+            onOff("와이퍼", Engine.rainNow, "rain", "비 오는 날"),
+            onOff("전조등", Engine.nightNow, "night", "밤길"),
+            onOff("조수석 탑승", Engine.passengerNow, "together", "옆자리에 누가 탄 날"),
+        ))
+        root.addView(row(
+            secondary("2시간 넘게 달린 것처럼") { demoResult(Engine.demoSignal("long"), "오래 운전할 때") },
+            secondary("경고등 켜기") { demoResult(Engine.demoSignal("warning"), "경고등이 켜질 때") },
+        ))
+
+        root.addView(section(R.drawable.ic_mic, "운전 중 말로 저장 (Gleo)"))
+        root.addView(label("운전자가 Gleo에게 「여기 저장해 줘」라고 말한 것처럼 지금 자리를 저장해요. 세운 뒤 메인의 「달리면서 저장한 곳」에서 안부로 남겨요."))
+        root.addView(row(secondary("「여기 저장해 줘」") {
+            toast(when (Engine.saveSpot("")) {
+                Engine.SpotResult.SAVED -> "지금 자리를 저장했어요"
+                Engine.SpotResult.MERGED -> "방금 저장한 자리와 합쳤어요"
+                Engine.SpotResult.NO_LOCATION -> "아직 위치를 몰라요. 위에서 장소로 먼저 옮겨 주세요"
+                Engine.SpotResult.NOT_READY -> "모임에 들어간 뒤에 저장할 수 있어요"
+                Engine.SpotResult.NO_GROUP -> "그 모임을 찾지 못했어요"
+            })
+        }, View(this)))
+
+        root.addView(section(R.drawable.ic_settings, "시연 데이터"))
+        root.addView(label("앱만으로 동작하는 시연 버전이에요. 가족·친구와 안부는 이 차 안에만 있어요. 남기기의 「보내는 사람」을 엄마·누나 등으로 바꾸면 민수에게 온 안부처럼 시험할 수 있어요."))
+        root.addView(row(secondary("시연 데이터로 되돌리기") {
+            confirm("시연 데이터로 되돌릴까요?", "남긴 안부·들은 기록·설정한 모임이 모두 처음 시연 상태로 돌아가요.", "되돌리기") {
+                toast("처음 상태로 되돌리는 중이에요…")
+                history.clear(); screen = Screen.HOME; demoPlaceName = null
+                Engine.resetDemo { toast("시연 데이터로 되돌렸어요"); render() }
+            }
+        }, View(this)))
     }
 
     /** 모임 통째로 지우기. 되돌릴 수 없어서 두 번 묻는다. */
@@ -2094,7 +2233,7 @@ class MainActivity : Activity(), Engine.Ui {
     private fun prepareLeave() {
         leaveStep = 0
         leaveTo = emptyList(); leaveReplyTo = null
-        leaveHours = "any"; leaveDays = "any"; leaveFrom = "now"; leaveRepeat = "once"
+        leaveHours = "any"; leaveDays = "any"; leaveFrom = "now"; leaveUntil = "forever"; leaveRepeat = "once"
         if (leaveCircleId == null || store.keyOf(leaveCircleId!!) == null) leaveCircleId = store.activeCircleId
         leaveMapCenter = null
         val lc = leaveCircle()
@@ -2208,21 +2347,30 @@ class MainActivity : Activity(), Engine.Ui {
         if (leaveWhen == "region") leavePlace?.let { p ->
             root.addView(label("고른 곳이 든 지역: ${Regions.districtOf(p.lat, p.lon)?.let { fullName(it) } ?: "알 수 없음"} (그 시·군·구에 들어가면)"))
         }
-        root.addView(label(if (Engine.naviPlaces.isNotEmpty()) "내비의 집·회사·최근 목적지에서 고를 수 있어요. 이 근처를 모임의 다른 사람이 지나가면 그 사람 차에서 들려줘요."
-            else "이 근처를 모임의 다른 사람이 지나가면 그 사람 차에서 들려줘요."))
+        root.addView(label("이 근처를 모임의 다른 사람이 지나가면 그 사람 차에서 들려줘요."))
         root.addView(space(12))
         val here = lastLoc?.let { Place(HERE, it.first, it.second) }
-        // 기본 내비의 집·회사·즐겨찾기·최근 목적지가 있으면 그것을, 없으면 예시 장소를
-        val navi = Engine.naviPlaces.map { Place(it.name, it.lat, it.lon) }
-        val places = listOfNotNull(here) + navi.ifEmpty { PRESETS }.take(5 - 1)
-        val buttons = places.map { p ->
-            // 좌표가 아니라 고른 버튼으로 표시한다 (지금 자리가 예시 장소 근처여도 하나만 ✓)
-            choice(if (leaveKey == p.name) leavePlace?.name ?: p.name else p.name, leaveKey == p.name) { leavePlace = p; leaveKey = p.name; render() }
-        } + choice("지도에서 고르기", leaveKey == MAP_PICK) {
+        // 좌표가 아니라 고른 버튼으로 표시한다 (지금 자리가 예시 장소 근처여도 하나만 ✓). prefix는 이게 어떤 장소인지 알려 주는 표시.
+        fun pick(p: Place, prefix: String = "") =
+            choice(prefix + (if (leaveKey == p.name) leavePlace?.name ?: p.name else p.name), leaveKey == p.name) { leavePlace = p; leaveKey = p.name; render() }
+        // 무슨 장소인지 묶음마다 이름표를 붙인다: 지금 있는 곳 · 내비에 저장된 장소(집/회사/즐겨찾기/최근) · 예시
+        root.addView(section(R.drawable.ic_pin, "지금 있는 곳 · 직접 고르기"))
+        root.addView(row(*listOfNotNull(here?.let { pick(it) }, choice("지도에서 고르기", leaveKey == MAP_PICK) {
             if (leaveKey != MAP_PICK) { leaveKey = MAP_PICK; leavePlace = null; leaveMapCenter = null }
             render()
+        }).toTypedArray()))
+        val navi = Engine.naviPlaces
+        if (navi.isNotEmpty()) {
+            root.addView(section(R.drawable.ic_home, "내비에 저장된 장소"))
+            root.addView(label("🏠 집 · 🏢 회사 · ⭐ 즐겨찾기 · 🕘 최근 목적지"))
+            navi.take(4).map { n ->
+                pick(Place(n.name, n.lat, n.lon), when (n.kind) { "home" -> "🏠 "; "office" -> "🏢 "; "recent" -> "🕘 "; else -> "⭐ " })
+            }.chunked(3).forEach { group -> root.addView(row(*group.toTypedArray())) }
+        } else {
+            root.addView(section(R.drawable.ic_map, "예시 장소"))
+            root.addView(label("내비에 저장된 장소가 없어서 예시로 보여 드려요. 원하는 곳은 「지도에서 고르기」로 골라 주세요."))
+            PRESETS.take(4).map { pick(it) }.chunked(3).forEach { group -> root.addView(row(*group.toTypedArray())) }
         }
-        buttons.chunked(3).forEach { group -> root.addView(row(*group.toTypedArray())) }
         if (leaveKey == MAP_PICK) {
             root.addView(label(leavePlace?.let { "고른 곳: %.5f, %.5f · 다른 곳을 누르면 옮겨요".format(it.lat, it.lon) } ?: "지도를 눌러 장소를 골라 주세요"))
             root.addView(pickMap(), LinearLayout.LayoutParams(-1, dp(560)).apply { bottomMargin = dp(12) })
@@ -2329,7 +2477,8 @@ class MainActivity : Activity(), Engine.Ui {
         val reply = leaveReplyTo
         root.addView(card(listOfNotNull(
             reply?.let { line("답장", "${it.authorName}님의 「${it.placeName}」 메시지에") },
-            line("언제", whenName + condSummary()),
+            line("언제", whenName),
+            line("조건", condSummary()),
             leavePlace?.takeIf { leaveWhen in WITH_PLACE }?.let { p ->
                 if (leaveWhen == "region") line("지역", Regions.districtOf(p.lat, p.lon)?.let { fullName(it) } ?: p.name)
                 else line("장소", "${p.name} · ${if (leaveRadius < 1000) "${leaveRadius}m" else "${leaveRadius / 1000}km"} 안")
@@ -2337,28 +2486,32 @@ class MainActivity : Activity(), Engine.Ui {
             line("받는 사람", if (leaveTo.isEmpty()) "모임 모두" else leaveTo.joinToString(", ") { c.nameOf(it) }),
             line("내용", if (recorder.hasRecording) "목소리 메시지" else "“$leaveText”"),
         )))
-        // 받는 사람 · 시간대 · 요일 · 언제부터 · 횟수
+        // 어떤 조건이든 같은 8개: 받는 사람 · 시간대 · 요일 · 언제부터 / 언제까지 · 횟수 · 모임 · 보내는 사람
+        val hours = hoursFor(leaveWhen)
+        if (hours.none { it.first == leaveHours }) leaveHours = "any"
         root.addView(row(
             secondary("받는 사람") {
                 val others = c.members.filter { it.id != author }
                 pickFrom("누구에게 남길까요?", listOf("모임 모두") + others.map { it.name }) { i -> leaveTo = if (i == 0) emptyList() else listOf(others[i - 1].id); render() }
             },
-            secondary("시간대: ${WHEN_HOURS.first { it.first == leaveHours }.second}") {
-                pickFrom("몇 시에 들려줄까요?", WHEN_HOURS.map { it.second }) { i -> leaveHours = WHEN_HOURS[i].first; render() }
+            secondary("시간: ${WHEN_HOURS.first { it.first == leaveHours }.second}") {
+                val why = if (leaveWhen == "night") " (밤길이라 아침은 빼요)" else ""
+                pickFrom("몇 시에 들려줄까요?$why", hours.map { it.second }) { i -> leaveHours = hours[i].first; render() }
             },
             secondary("요일: ${WHEN_DAYS.first { it.first == leaveDays }.second}") {
                 pickFrom("무슨 요일에 들려줄까요?", WHEN_DAYS.map { it.second }) { i -> leaveDays = WHEN_DAYS[i].first; render() }
             },
+            secondary("부터: ${WHEN_FROM.first { it.first == leaveFrom }.second}") {
+                pickFrom("언제부터 들려줄까요?", WHEN_FROM.map { it.second }) { i -> leaveFrom = WHEN_FROM[i].first; render() }
+            },
         ))
         root.addView(row(
-            secondary("언제부터: ${WHEN_FROM.first { it.first == leaveFrom }.second}") {
-                pickFrom("언제부터 들려줄까요?", WHEN_FROM.map { it.second }) { i -> leaveFrom = WHEN_FROM[i].first; render() }
+            secondary("까지: ${WHEN_UNTIL.first { it.first == leaveUntil }.second}") {
+                pickFrom("언제까지 들려줄까요? (시작한 날부터)", WHEN_UNTIL.map { it.second }) { i -> leaveUntil = WHEN_UNTIL[i].first; render() }
             },
             secondary("횟수: ${REPEATS.first { it.first == leaveRepeat }.second}") {
                 pickFrom("몇 번 들려줄까요?", REPEATS.map { it.second }) { i -> leaveRepeat = REPEATS[i].first; render() }
             },
-        ))
-        root.addView(row(
             secondary("모임: ${c.name}") {
                 val list = store.memberships.mapNotNull { Engine.circles[it.circleId] }
                 if (list.size < 2) toast("다른 모임에도 들어가면 여기서 고를 수 있어요")
@@ -2373,13 +2526,25 @@ class MainActivity : Activity(), Engine.Ui {
             else "${if (leaveTo.isEmpty()) "모임의 다른 사람" else leaveTo.joinToString(", ") { c.nameOf(it) } + "님"} 차에서 들려줘요. ${c.nameOf(author)}님 차에서는 재생되지 않아요."))
     }
 
-    /** 「 · 밤 23~5시 · 금요일 · 1년 뒤부터 · 매번」 */
-    private fun condSummary(): String = listOfNotNull(
-        WHEN_HOURS.first { it.first == leaveHours }.second.takeIf { leaveHours != "any" },
-        WHEN_DAYS.first { it.first == leaveDays }.second.takeIf { leaveDays != "any" },
-        WHEN_FROM.first { it.first == leaveFrom }.second.takeIf { leaveFrom != "now" },
+    /** 「언제든 · 매일 · 지금부터 · 계속 · 한 번」: 고르지 않은 것도 빠짐없이 */
+    private fun condSummary(): String = listOf(
+        WHEN_HOURS.first { it.first == leaveHours }.second,
+        WHEN_DAYS.first { it.first == leaveDays }.second,
+        WHEN_FROM.first { it.first == leaveFrom }.second,
+        WHEN_UNTIL.first { it.first == leaveUntil }.second,
         REPEATS.first { it.first == leaveRepeat }.second,
-    ).joinToString("") { " · $it" }
+    ).joinToString(" · ")
+
+    /** 조건과 안 맞는 시간대는 뺀다: 밤길(전조등)에 아침은 어색하다 */
+    private fun hoursFor(whenKey: String) = if (whenKey == "night") WHEN_HOURS.filter { it.first != "morning" } else WHEN_HOURS
+
+    /** 시작한 날(언제부터)에서 언제까지. 「계속」이면 null */
+    private fun untilDate(fromKey: String, untilKey: String): String? {
+        val start = fromDate(fromKey)?.let { java.time.LocalDate.parse(it) } ?: java.time.LocalDate.now()
+        return when (untilKey) {
+            "week" -> start.plusWeeks(1); "month" -> start.plusMonths(1); "year" -> start.plusYears(1); else -> null
+        }?.toString()
+    }
 
     private fun fromDate(key: String): String? {
         val d = java.time.LocalDate.now()
@@ -2585,6 +2750,7 @@ class MainActivity : Activity(), Engine.Ui {
         WHEN_HOUR_RANGE[leaveHours]?.let { (f, t) -> body.put("hourFrom", f).put("hourTo", t) }
         WHEN_DAY_SET[leaveDays]?.let { body.put("days", org.json.JSONArray(it.toList())) }
         fromDate(leaveFrom)?.let { body.put("notBefore", it) }
+        untilDate(leaveFrom, leaveUntil)?.let { body.put("notAfter", it) }
         body.put("repeat", leaveRepeat)
         val doneName = if (leaveWhen == "place") "${p?.name}에" else "「${WHEN_OPTIONS.first { it.first == leaveWhen }.second}」에"
         if (voice) body.put("audioBase64", recorder.base64()).put("audioExt", "m4a")
@@ -2667,7 +2833,14 @@ class MainActivity : Activity(), Engine.Ui {
                         heardBy.isNotEmpty() -> "$heardBy 들음"
                         else -> "아직"
                     }
-                    addView(big("${m.placeName} · ${if (m.kind == "voice") "목소리" else "글"} · $status"), LinearLayout.LayoutParams(0, -2, 1f))
+                    // 무엇을 누구에게 남겼는지가 먼저 보이게: 내용 → 받는 사람 · 언제/어디서 · 들었는지
+                    val toNames = if (m.to.isEmpty()) "모두" else m.to.joinToString(", ") { c.nameOf(it) }
+                    addView(column().apply {
+                        addView(big(if (m.kind == "voice") "🎙 목소리 메시지" else "「${m.text}」"))
+                        addView(label("${toNames}에게 · ${m.occasion} · $status"))
+                    }, LinearLayout.LayoutParams(0, -2, 1f))
+                    addView(navButton(if (m.kind == "voice") "다시 녹음" else "고치기") { editNote(m, toNames, me) }
+                        .apply { layoutParams = LinearLayout.LayoutParams(dp(170), dp(72)).apply { marginEnd = dp(10) } })
                     addView(navButton("지우기") {
                         confirm("${m.placeName} 메시지를 지울까요?", "들은 기록도 함께 지워져요.", "지우기") {
                             Api.deleteMessage(m.id, me) { ok -> if (ok) { refreshMessages(); loadFeed() } else toast("지우지 못했어요") }
@@ -2796,12 +2969,6 @@ class MainActivity : Activity(), Engine.Ui {
                 fun small(s: String, onClick: () -> Unit) = navButton(s, onClick).apply {
                     layoutParams = LinearLayout.LayoutParams(dp(170), dp(72)).apply { marginStart = dp(10) }
                 }
-                addView(small("주인") {
-                    if (car.me) pickOwner()
-                    else pickFrom("${car.name}의 주인", c.members.map { it.name }) { i ->
-                        Api.setCarOwner(car.id, c.members[i].id) { ok -> if (!ok) toast("바꾸지 못했어요"); loadCars() }
-                    }
-                })
                 addView(small("이름") {
                     askText("차 이름", car.name) { name ->
                         if (car.me) Engine.renameCar(name) { ok -> if (!ok) toast("바꾸지 못했어요"); loadCars() }
@@ -2832,11 +2999,12 @@ class MainActivity : Activity(), Engine.Ui {
      * (차 화면 키보드로 한글을 치기 번거로워서). allowBlank면 비워 두고 넘어갈 수 있다.
      */
     private fun askText(title: String, initial: String, multiline: Boolean = false, maxLength: Int = 40,
-                        suggestions: List<String> = emptyList(), allowBlank: Boolean = false, okLabel: String = "확인", onOk: (String) -> Unit) {
+                        suggestions: List<String> = emptyList(), allowBlank: Boolean = false, okLabel: String = "확인",
+                        skipLabel: String? = null, onOk: (String) -> Unit) {
         if (parked != true) return
         val input = EditText(this).apply {
             filters = arrayOf(android.text.InputFilter.LengthFilter(maxLength))
-            setText(initial.take(maxLength)); setSelection(text.length); textSize = 24f; setTextColor(INK)
+            setText(initial.take(maxLength)); setSelection(text.length); textSize = INPUT_TEXT_SP; setTextColor(INK)
             if (multiline) { minLines = 3; maxLines = 5 } else isSingleLine = true
         }
         val view = if (suggestions.isEmpty()) input else column().apply {
@@ -2856,7 +3024,89 @@ class MainActivity : Activity(), Engine.Ui {
         }
         AlertDialog.Builder(this, dialogTheme()).setTitle(title).setView(view)
             .setPositiveButton(okLabel) { _, _ -> input.text.toString().trim().let { if (it.isNotEmpty() || allowBlank) onOk(it) } }
+            // 선택 항목(호칭 등)은 「건너뛰기」로 비워 둔 채 다음으로. 「취소」는 이 입력 전체를 그만두는 것이라 따로 둔다.
+            .apply { skipLabel?.let { setNeutralButton(it) { _, _ -> onOk("") } } }
             .setNegativeButton("취소", null).show().also { dialog = it }
+    }
+
+    /**
+     * 내가 남긴 쪽지 고치기. 글은 직접 고치거나 「말로 다시 쓰기」, 목소리는 「다시 녹음」.
+     * 말이나 녹음으로 다시 하면 예전 내용은 버리고 처음부터 새로 쓴다 (이어 붙이지 않는다). 「고치기」를 눌러야 바뀌고, 닫으면 그대로다.
+     */
+    private fun editNote(m: PlaceMessage, toNames: String, me: String) {
+        if (parked != true) return
+        val key = store.keyOf(m.circleId) ?: Api.key
+        fun done(err: String?) { if (err != null) toast(err) else { toast("고쳤어요"); refreshMessages(); loadFeed() } }
+        fun hasMic() = checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+        if (m.kind == "voice") {
+            // 목소리: 새로 녹음하면 예전 녹음은 지워지고 새 녹음으로 바뀐다
+            val toggle = navButton("● 녹음 시작") {}
+            fun refreshLabel() { toggle.text = if (recorder.recording) "■ 녹음 끝" else if (recorder.hasRecording) "● 다시 녹음" else "● 녹음 시작" }
+            toggle.setOnClickListener {
+                when {
+                    recorder.recording -> { recorder.stop(); refreshLabel() }
+                    !hasMic() -> { requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), REQ_MIC); toast("마이크를 허락한 뒤 다시 눌러 주세요") }
+                    else -> {
+                        recorder.clear()
+                        if (recorder.start { toast("${Recorder.MAX_SECONDS}초가 되어 녹음을 마쳤어요"); refreshLabel() }) refreshLabel() else toast("마이크를 쓸 수 없어요")
+                    }
+                }
+            }
+            val body = column().apply {
+                setPadding(dp(24), dp(8), dp(24), 0)
+                addView(label("새로 녹음하면 예전 녹음은 지워지고 이 녹음으로 바뀌어요 (${Recorder.MAX_SECONDS}초까지)"))
+                addView(toggle, LinearLayout.LayoutParams(-1, dp(72)).apply { topMargin = dp(12) })
+            }
+            val dlg = AlertDialog.Builder(this, dialogTheme()).setTitle("목소리 다시 남기기 (${toNames}에게)").setView(body)
+                .setPositiveButton("바꾸기", null).setNegativeButton("취소", null)
+                .setOnDismissListener { recorder.clear() }.show().also { dialog = it }
+            dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                if (recorder.recording) recorder.stop()
+                val audio = recorder.base64()
+                if (audio == null) { toast("먼저 녹음해 주세요"); return@setOnClickListener }
+                dlg.dismiss()
+                Api.editMessage(m.id, me, null, audioBase64 = audio, k = key) { err -> done(err) }
+            }
+            return
+        }
+
+        // 글: 직접 고치기, 또는 말로 처음부터 다시 쓰기 (말하는 동안 입력칸이 새 말로 바뀐다)
+        val input = EditText(this).apply {
+            filters = arrayOf(android.text.InputFilter.LengthFilter(MAX_TEXT))
+            setText(m.text.take(MAX_TEXT)); setSelection(text.length); textSize = INPUT_TEXT_SP; setTextColor(INK)
+            minLines = 3; maxLines = 5
+        }
+        val speak = navButton("🎤 말로 다시 쓰기") {}
+        fun idle() { speak.text = "🎤 말로 다시 쓰기" }
+        speak.setOnClickListener {
+            when {
+                dictation.listening -> dictation.stop()
+                !hasMic() -> { requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), REQ_STT); toast("마이크를 허락한 뒤 다시 눌러 주세요") }
+                else -> {
+                    val started = dictation.start(
+                        onChange = { if (dictation.partial.isNotBlank()) input.setText(dictation.partial.take(MAX_TEXT)) },
+                        onText = { t -> input.setText(GleoActions.direct(t).take(MAX_TEXT)); input.setSelection(input.text.length) },
+                        onEnd = { err -> err?.let { toast(it) }; idle() },
+                    )
+                    if (started) speak.text = "■ 다 말했어요" else toast("이 차에서는 음성 인식을 쓸 수 없어요")
+                }
+            }
+        }
+        val body = column().apply {
+            setPadding(dp(24), dp(8), dp(24), 0)
+            addView(input)
+            addView(speak, LinearLayout.LayoutParams(-1, dp(72)).apply { topMargin = dp(12) })
+            addView(label("말하면 예전 글은 지워지고 말한 내용으로 처음부터 바뀌어요"))
+        }
+        AlertDialog.Builder(this, dialogTheme()).setTitle("메시지 고치기 (${toNames}에게)").setView(body)
+            .setPositiveButton("고치기") { _, _ ->
+                val t = input.text.toString().trim()
+                if (t.isEmpty()) toast("메시지를 써 주세요") else Api.editMessage(m.id, me, t, k = key) { err -> done(err) }
+            }
+            .setNegativeButton("취소", null)
+            .setOnDismissListener { dictation.cancel() }
+            .show().also { dialog = it }
     }
 
     private fun confirm(title: String, message: String, ok: String = "빼기", onOk: () -> Unit) {
@@ -3024,10 +3274,18 @@ class MainActivity : Activity(), Engine.Ui {
         )
         /** 장소를 함께 고르는 조건 */
         private val WITH_PLACE = setOf("place", "park", "region")
+        /** 시연 이동·시동·세우기 버튼 (앱만 버전·개발 빌드에서만, 실차 배포에는 없음) */
+        private val DEMO_MOVE = BuildConfig.STANDALONE || BuildConfig.DEBUG
+        /** 「들은 안부」에 처음 보여 줄 개수 */
+        private const val HEARD_PREVIEW = 4
         private val WHEN_HOURS = listOf("any" to "언제든", "morning" to "아침 6~10시", "evening" to "저녁 17~21시", "night" to "밤 23~5시")
         private val WHEN_HOUR_RANGE = mapOf("morning" to (6 to 10), "evening" to (17 to 21), "night" to (23 to 5))
-        private val WHEN_DAYS = listOf("any" to "매일", "weekday" to "평일", "weekend" to "주말", "mon" to "월요일", "fri" to "금요일")
-        private val WHEN_DAY_SET = mapOf("weekday" to setOf(1, 2, 3, 4, 5), "weekend" to setOf(6, 7), "mon" to setOf(1), "fri" to setOf(5))
+        private val DAY_NAMES = listOf("월", "화", "수", "목", "금", "토", "일")
+        private val WHEN_DAYS = listOf("any" to "매일", "weekday" to "평일", "weekend" to "주말") +
+            DAY_NAMES.mapIndexed { i, n -> "d${i + 1}" to "${n}요일" }
+        private val WHEN_DAY_SET = mapOf("weekday" to setOf(1, 2, 3, 4, 5), "weekend" to setOf(6, 7)) +
+            (1..7).associate { "d$it" to setOf(it) }
+        private val WHEN_UNTIL = listOf("forever" to "계속", "week" to "1주일 동안", "month" to "한 달 동안", "year" to "1년 동안")
         private val WHEN_FROM = listOf("now" to "지금부터", "tomorrow" to "내일부터", "week" to "다음 주부터", "year" to "1년 뒤부터")
         private val REPEATS = listOf("once" to "한 번", "always" to "매번", "weekly" to "주 1회까지")
         private val WHEN_ICONS = mapOf("place" to R.drawable.ic_pin, "rain" to R.drawable.ic_rain, "night" to R.drawable.ic_moon, "together" to R.drawable.ic_people, "door" to R.drawable.ic_door,
@@ -3044,6 +3302,8 @@ class MainActivity : Activity(), Engine.Ui {
             "region" to "고른 곳의 시·군·구에 들어갈 때",
             "warning" to "계기판 경고등이 켜질 때",
         )
+        /** 글자 입력 칸의 글자 크기 (차 화면에서 멀리서도 읽히게. 다른 제목은 28sp 안팎) */
+        private const val INPUT_TEXT_SP = 34f
         private val STEP_NAMES =mapOf("when" to "언제", "place" to "어디서", "content" to "내용", "confirm" to "확인")
         /** 폰 웹과 같은 예시 장소 */
         private val PRESETS = listOf(
@@ -3102,6 +3362,8 @@ class MainActivity : Activity(), Engine.Ui {
             Triple(Screen.FEED, R.drawable.ic_people, "소식"),
             Triple(Screen.SETTINGS, R.drawable.ic_settings, "설정"),
         )
+        /** 앱만 버전의 「시연」 메뉴 (설정 바로 위) */
+        private val DEMO_RAIL = Triple(Screen.DEMO, R.drawable.ic_play, "시연")
         /** 모임 색 (모임마다 하나, 들어간 순서대로) */
         private val CIRCLE_COLOR_NAMES = listOf("blue", "orange", "green", "purple", "pink", "teal", "red")
         /** 지도 단계 경계 (확대 수준) */

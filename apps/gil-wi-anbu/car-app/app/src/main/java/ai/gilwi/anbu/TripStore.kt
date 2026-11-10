@@ -270,20 +270,21 @@ class TripStore(context: Context) {
      * 주행 중 말로 저장한 곳 (Gleo 「여기 저장」). 정차한 뒤 안부로 남기거나 지운다. 이 차 안에만 두고 7일이 지나면 지운다.
      * conditions: 저장할 때 차 상황 (rain · night · together)
      */
-    data class Spot(val id: String, val lat: Double, val lon: Double, val at: Long, val memo: String, val conditions: String, val address: String = "")
+    data class Spot(val id: String, val lat: Double, val lon: Double, val at: Long, val memo: String, val conditions: String, val address: String = "",
+                    /** 저장할 때 고른 그룹(모임 id). 그 자리에 남기면 이 그룹으로 간다 */ val circleId: String = "")
 
     val spots: List<Spot>
         get() {
             val arr = runCatching { org.json.JSONArray(device.getString("spots", "[]")) }.getOrElse { org.json.JSONArray() }
             val cut = System.currentTimeMillis() - SPOT_KEEP_MS
             return (0 until arr.length()).map { arr.getJSONObject(it) }.map {
-                Spot(it.getString("id"), it.getDouble("lat"), it.getDouble("lon"), it.getLong("at"), it.optString("memo"), it.optString("cond"), it.optString("addr"))
+                Spot(it.getString("id"), it.getDouble("lat"), it.getDouble("lon"), it.getLong("at"), it.optString("memo"), it.optString("cond"), it.optString("addr"), it.optString("circle"))
             }.filter { it.at >= cut }
         }
 
     private fun saveSpots(list: List<Spot>) {
         val arr = org.json.JSONArray()
-        list.forEach { arr.put(org.json.JSONObject().put("id", it.id).put("lat", it.lat).put("lon", it.lon).put("at", it.at).put("memo", it.memo).put("cond", it.conditions).put("addr", it.address)) }
+        list.forEach { arr.put(org.json.JSONObject().put("id", it.id).put("lat", it.lat).put("lon", it.lon).put("at", it.at).put("memo", it.memo).put("cond", it.conditions).put("addr", it.address).put("circle", it.circleId)) }
         device.edit().putString("spots", arr.toString()).apply()
     }
 

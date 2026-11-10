@@ -3,6 +3,8 @@ package ai.gilwi.anbu
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * 앱의 두뇌. AnbuService가 살려 두므로 내비가 앞에 떠 있어도 계속 돈다.
@@ -261,6 +263,7 @@ object Engine : CarSignals.Listener {
     fun resetDemo(done: () -> Unit) {
         if (!BuildConfig.STANDALONE) return
         player.stop(); playing = null; pending.clear(); skipped.clear()
+        car.demoLocation = null
         LocalServer.reset()
         store.clearPairing()
         Api.key = null
@@ -330,6 +333,7 @@ object Engine : CarSignals.Listener {
                 val ids = store.memberships.map { it.circleId }.toSet()
                 circles.keys.retainAll(ids)
                 changed()
+                ensureOwners()
                 // 시동 직후엔 네트워크가 늦게 붙으므로 실패하면 금방 다시 시도한다
                 if (!needPairing) main.postDelayed(refreshTask, if (okAny) REFRESH_MS else RETRY_MS)
             }
@@ -437,6 +441,29 @@ object Engine : CarSignals.Listener {
         done(name != null)
     }
 
+    /** 주인을 정하는 중인 연결 (같은 요청을 두 번 보내지 않게) */
+    private val ownerPending = mutableSetOf<String>()
+
+    /**
+     * 「이 차는 누구 차인가요?」는 묻지 않는다 (팀 결정, 시나리오는 한 사람의 차로 흘러간다).
+     * 주인이 없는 모임(가족 공용 코드로 들어온 경우 등)은 기본 사람으로 저절로 정한다: 시연 가족이면 민수, 아니면 모임의 첫 사람.
+     * 바꾸려면 폰 웹이나 그 사람의 「내 코드」로 다시 들어오면 된다.
+     */
+    private fun ensureOwners() {
+        store.memberships.filter { it.ownerId == null && it.key !in ownerPending }.forEach { ms ->
+            val c = circles[ms.circleId] ?: return@forEach
+            val pick = c.members.firstOrNull { it.id == DEMO_OWNER || it.id == DEMO_FRIEND_OWNER } ?: c.members.firstOrNull() ?: return@forEach
+            ownerPending += ms.key
+            Api.setOwner(pick.id, ms.key) { name ->
+                ownerPending -= ms.key
+                if (name == null) return@setOwner
+                Log.d("차 주인 저절로 정함: ${c.name} → ${pick.name}")
+                store.syncMembership(ms.key, pick.id, name)
+                if (ms.key == store.deviceKey) setDriver(pick.id) else changed()
+            }
+        }
+    }
+
     fun setDriver(id: String?) {
         store.driverId = id
         if (id != null) pending.removeAll { it.authorId == id }
@@ -446,7 +473,48 @@ object Engine : CarSignals.Listener {
         maybeAutoPlay()
     }
 
-    fun setDemoLocation(loc: Pair<Double, Double>?) { car.demoLocation = loc }
+    fun setDemoLocation(loc: Pair<Double, Double>?) { if (loc != null) demoBypass { car.demoLocation = loc } else car.demoLocation = null }
+
+    /** 시연 동작(이동·시동·세우기) 동안에는 시간대·요일·날짜 조건과 「하루 한 번」을 보지 않는다. 한 번만 들을 안부를 이미 들었으면 그대로 안 연다. */
+    private var demoNow = false
+    private fun demoBypass(action: () -> Unit) { demoNow = true; try { action() } finally { demoNow = false } }
+    /** 시연으로 옮겨 둔 자리 (없으면 실제 GPS·내비 위치) */
+    val demoLocation get() = car.demoLocation
+
+    /** 시연: 시동을 건 것처럼 「시동 걸 때」 안부를 연다 */
+    fun demoStart(): Int = demoCount { demoBypass { deliver(messages.filter { it.opensOn == "start" }) } }
+
+    /** 시연: 달리다가 지금 자리에서 P로 세운 것처럼 (「도착해 차를 세울 때」). 내비 화면으로 넘어가지 않게 D는 거치지 않는다. */
+    fun demoPark(): Int = demoCount {
+        if (driveStartedAt == 0L) driveStartedAt = System.currentTimeMillis()
+        droveSinceLastPark = true
+        if (gear == CarSignals.Gear.P) gear = CarSignals.Gear.D // 같은 기어는 무시하므로
+        demoBypass { onGear(CarSignals.Gear.P) }
+    }
+
+    /**
+     * 시연: 차 신호를 받은 것처럼. kind = door 운전석 문 · rain 와이퍼 · night 전조등 · together 조수석 · warning 경고등 · long 2시간 넘게 달림.
+     * 새로 열린 안부 개수를 돌려준다.
+     */
+    fun demoSignal(kind: String, on: Boolean = true): Int = demoCount {
+        demoBypass {
+            when (kind) {
+                "door" -> onDriverDoorOpened()
+                "rain" -> onWiper(on)
+                "night" -> onLowBeam(on)
+                "together" -> { otherBelt = false; onPassenger(on) }
+                "warning" -> onWarning(1)
+                "long" -> deliver(messages.filter { it.opensOn == "long" })
+            }
+        }
+    }
+
+    /** 시연 동작으로 새로 열린 안부 개수 */
+    private fun demoCount(action: () -> Unit): Int {
+        val before = pending.map { it.id }.toSet() + listOfNotNull(playing?.id)
+        action()
+        return (pending.map { it.id } + listOfNotNull(playing?.id)).count { it !in before }
+    }
 
     /** 위치 권한을 받은 뒤 GPS를 다시 듣는다 */
     fun restartGps() { if (started) car.restartGps() }
@@ -478,12 +546,8 @@ object Engine : CarSignals.Listener {
             // 달리면서 듣던 것은 세워도 그대로, 화면만 재생 화면으로
             if (playing != null) ui?.onPlayback()
             droveSinceLastPark = false
-            if (store.driverId == null) {
-                ui?.onNeedDriver()
-                if (!uiVisible) Notifier.needDriver()
-            } else {
-                maybeAutoPlay()
-            }
+            // 차 주인은 고르게 하지 않는다: 없으면 저절로 정하고(정해지면 setDriver가 재생을 이어 간다)
+            if (store.driverId == null) ensureOwners() else maybeAutoPlay()
         } else {
             askingPassenger = false
             // 끝까지 듣고 출발했으면 「들었어요」로 본다
@@ -638,12 +702,12 @@ object Engine : CarSignals.Listener {
             val driver = ownerOf(m)
             if (m.authorId == driver) continue
             if (m.to.isNotEmpty() && driver !in m.to) continue // 다른 사람에게 보낸 것
-            if (!timeOk(m)) continue
+            if (!demoNow && !timeOk(m)) continue
             if (!repeatOk(m, driver)) continue
             if (m.kind == "text" && !store.acceptTts) continue
             if (m in pending || m.id == playing?.id) continue
             if (heardElsewhereToday(m)) continue // 오늘 다른 차에서 이미 들음
-            if (!store.markDelivered(m.id, driver ?: "")) continue
+            if (!store.markDelivered(m.id, driver ?: "") && !demoNow) continue
             Log.d("메시지 열림: ${m.placeName} (${m.authorName}) [${m.opensOn}]")
             pending.add(m)
             added += m
@@ -658,6 +722,7 @@ object Engine : CarSignals.Listener {
     private fun timeOk(m: PlaceMessage): Boolean {
         val now = java.time.LocalDateTime.now()
         if (m.notBefore != null && now.toLocalDate().toString() < m.notBefore) return false
+        if (m.notAfter != null && now.toLocalDate().toString() > m.notAfter) return false
         if (m.days.isNotEmpty() && now.dayOfWeek.value !in m.days) return false
         val f = m.hourFrom; val t = m.hourTo
         if (f != null && t != null) {
@@ -755,24 +820,29 @@ object Engine : CarSignals.Listener {
 
     // 주행 중 말로 저장 (Gleo 「여기 저장」) ---------------------------------------------
 
-    enum class SpotResult { SAVED, MERGED, NO_LOCATION, NOT_READY }
+    enum class SpotResult { SAVED, MERGED, NO_LOCATION, NOT_READY, NO_GROUP }
 
-    /** 지금 자리를 임시로 저장한다. 1분 안에 200m 안에서 또 저장하면 하나로 합친다 (메모는 새것으로). */
-    fun saveSpot(memo: String): SpotResult {
+    /**
+     * 지금 자리를 임시로 저장한다. 1분 안에 200m 안에서 또 저장하면 하나로 합친다 (메모는 새것으로).
+     * groupQuery(「가족」「친구」·모임 이름)를 주면 그 그룹 자리로 저장하고, 비면 지금 관리하는 모임.
+     */
+    fun saveSpot(memo: String, groupQuery: String = ""): SpotResult {
         if (needPairing) return SpotResult.NOT_READY
+        val group = findGroup(groupQuery) ?: return if (groupQuery.isBlank()) SpotResult.NOT_READY else SpotResult.NO_GROUP
         val (lat, lon) = lastLoc ?: return SpotResult.NO_LOCATION
         // 메모가 없으면 기본 내비가 알려 준 지금 주소를 이름으로 ("수정구 시흥동")
-        val place = car.address.orEmpty()
+        // 시연으로 옮겨 둔 자리면 내비 주소는 다른 곳이라 쓰지 않는다 (화면에서 시·군·구 이름으로)
+        val place = if (car.demoLocation != null) "" else car.address.orEmpty()
         val now = System.currentTimeMillis()
         val cond = listOfNotNull("rain".takeIf { rainNow }, "night".takeIf { nightNow }, "together".takeIf { passengerNow }).joinToString(",")
         val last = store.spots.lastOrNull()
         if (last != null && now - last.at < SPOT_MERGE_MS && MainActivity.distanceM(last.lat, last.lon, lat, lon) < 200) {
-            store.updateSpot(last.copy(memo = memo.ifBlank { last.memo }))
+            store.updateSpot(last.copy(memo = memo.ifBlank { last.memo }, circleId = if (groupQuery.isNotBlank()) group.id else last.circleId.ifEmpty { group.id }))
             changed()
             return SpotResult.MERGED
         }
-        store.addSpot(TripStore.Spot("s" + now.toString(36), lat, lon, now, memo, cond, place))
-        Log.d("주행 중 저장: $lat,$lon ${memo.ifBlank { "" }}")
+        store.addSpot(TripStore.Spot("s" + now.toString(36), lat, lon, now, memo, cond, place, group.id))
+        Log.d("주행 중 저장: $lat,$lon ${memo.ifBlank { "" }} [${group.name}]")
         changed()
         return SpotResult.SAVED
     }
@@ -792,6 +862,98 @@ object Engine : CarSignals.Listener {
     }
 
     fun removeSpot(id: String) { store.removeSpot(id); changed() }
+
+    // 말로 메시지 남기기 (Gleo 「LEAVE_DAON」) -----------------------------------------
+    // 운전 중이든 정차 중이든 같은 길로 화면 없이 보낸다. 글은 Gleo가 받아 적은 그대로, 보내기 전 확인은 Gleo가 한다.
+
+    enum class LeaveResult { SENT, EMPTY_TEXT, BAD_WHEN, NOT_READY, NO_GROUP, NO_AUTHOR, NO_RECIPIENT, NO_LOCATION, NO_SPOT, FAILED }
+
+    /** 그룹 종류를 부르는 말 (서클 type → 말). 사람 이름 대신 그룹으로 부른다: 사람을 말하면 Gleo가 전화·문자로 넘긴다. */
+    private val GROUP_WORDS = mapOf(
+        "family" to listOf("가족", "식구", "family"),
+        "friends" to listOf("친구", "동기", "friend"),
+        "couple" to listOf("연인", "커플", "애인", "couple"),
+    )
+
+    /** "가족" · "친구들한테" · "대학 동기" · "우리집" → 이 차가 들어간 모임. 비면 지금 관리하는 모임. */
+    fun findGroup(query: String): Circle? {
+        val joined = store.memberships.mapNotNull { circles[it.circleId] }
+        val q = query.trim().removeSuffix("에게").removeSuffix("한테").removeSuffix("께").removeSuffix("들").removeSuffix("방").trim()
+        if (q.isEmpty()) return circle
+        return joined.firstOrNull { it.name == q }
+            ?: joined.firstOrNull { c -> GROUP_WORDS[c.type].orEmpty().any { q.contains(it, ignoreCase = true) } }
+            ?: joined.firstOrNull { it.name.contains(q) || q.contains(it.name) }
+    }
+
+    /** recipients: 실제로 받는 사람 이름 (비면 모임 모두), place: 장소 조건이면 장소 이름, detail: 실패 이유(못 찾은 이름·서버 오류) */
+    class LeaveOutcome(val result: LeaveResult, val recipients: List<String> = emptyList(), val whenKey: String = "",
+                       val place: String = "", val detail: String = "", val text: String = "", val group: String = "")
+
+    /** 열리는 조건의 한국어 이름 (MainActivity.WHEN_OPTIONS, 서버와 같은 키) */
+    val LEAVE_WHEN = linkedMapOf(
+        "place" to "이 장소를 지나면", "rain" to "비 오는 날", "night" to "밤길", "together" to "옆자리에 누가 탄 날", "door" to "차에 탈 때",
+        "start" to "시동 걸 때", "park" to "도착해 차를 세울 때", "long" to "오래 운전할 때", "region" to "그 지역에 들어가면", "warning" to "경고등이 켜질 때",
+    )
+    private val LEAVE_WITH_PLACE = setOf("place", "park", "region")
+    private const val LEAVE_TEXT_MAX = 300
+
+    /** "엄마", "엄마에게", "아버지님" → 모임 구성원. 이름 → 호칭 → 포함 순으로 찾고, 남긴 사람 자신은 뺀다. */
+    private fun findMember(c: Circle, query: String, authorId: String): Member? {
+        val q = query.trim().removeSuffix("에게").removeSuffix("한테").removeSuffix("께").removeSuffix("님").trim()
+        if (q.isEmpty()) return null
+        val others = c.members.filter { it.id != authorId }
+        return others.firstOrNull { it.name == q } ?: others.firstOrNull { it.title == q }
+            ?: others.firstOrNull { it.name.contains(q) || (it.title.isNotBlank() && it.title.contains(q)) }
+    }
+
+    /**
+     * 메시지를 남긴다. whenKey가 비면 「이 장소를 지나면」(지금 위치). useSpot이면 방금 저장한 곳을 장소로 쓰고 보낸 뒤 지운다.
+     * done은 메인 스레드에서 한 번 불린다.
+     */
+    fun leaveMessage(text: String, toQueries: List<String>, whenKey: String, useSpot: Boolean, groupQuery: String = "", done: (LeaveOutcome) -> Unit) {
+        val body = text.trim().take(LEAVE_TEXT_MAX)
+        if (body.isEmpty()) return done(LeaveOutcome(LeaveResult.EMPTY_TEXT))
+        val w = whenKey.trim().ifEmpty { "place" }
+        if (w !in LEAVE_WHEN) return done(LeaveOutcome(LeaveResult.BAD_WHEN, detail = w))
+        if (needPairing) return done(LeaveOutcome(LeaveResult.NOT_READY))
+        // 받는 쪽은 그룹(모임) 단위: 「가족에게」면 가족 모임 모두, 「친구에게」면 친구 모임 모두
+        // 저장한 곳에 남기면서 그룹을 말하지 않았으면, 저장할 때 고른 그룹으로 간다
+        val spotGroup = if (useSpot && groupQuery.isBlank()) store.spots.lastOrNull()?.circleId?.let { circles[it] } else null
+        val c = spotGroup ?: findGroup(groupQuery) ?: return done(LeaveOutcome(if (groupQuery.isBlank()) LeaveResult.NOT_READY else LeaveResult.NO_GROUP, detail = groupQuery.trim()))
+        val author = store.ownerOf(c.id) ?: store.driverId.takeIf { c.id == circle?.id } ?: return done(LeaveOutcome(LeaveResult.NO_AUTHOR))
+
+        val to = mutableListOf<Member>()
+        for (q in toQueries.filter { it.isNotBlank() }) {
+            val m = findMember(c, q, author) ?: return done(LeaveOutcome(LeaveResult.NO_RECIPIENT, detail = q.trim()))
+            if (m !in to) to += m
+        }
+
+        val json = JSONObject().put("authorId", author).put("when", w).put("kind", "text").put("text", body).put("repeat", "once")
+        if (to.isNotEmpty()) json.put("to", JSONArray(to.map { it.id }))
+
+        var placeName = ""
+        val spot = if (useSpot && w in LEAVE_WITH_PLACE) (store.spots.lastOrNull() ?: return done(LeaveOutcome(LeaveResult.NO_SPOT))) else null
+        if (w in LEAVE_WITH_PLACE) {
+            val (lat, lon) = if (spot != null) spot.lat to spot.lon else lastLoc ?: return done(LeaveOutcome(LeaveResult.NO_LOCATION))
+            val district = Regions.districtOf(lat, lon)
+            placeName = when {
+                w == "region" -> district?.let { "${Regions.provinceOfDistrict(it)?.name.orEmpty()} ${it.name}".trim() } ?: return done(LeaveOutcome(LeaveResult.NO_LOCATION))
+                spot != null -> spot.memo.ifBlank { spot.address.ifBlank { district?.name ?: "저장한 곳" } }
+                else -> (if (car.demoLocation != null) "" else car.address.orEmpty()).ifBlank { district?.name ?: "지금 있는 곳" }
+            }.take(40)
+            json.put("placeName", placeName).put("lat", lat).put("lon", lon).put("radiusM", 300)
+            if (w == "region") district?.let { json.put("regionCode", it.code) }
+        }
+
+        Api.postMessage(c.id, json, store.keyOf(c.id) ?: Api.key) { err ->
+            if (err != null) return@postMessage done(LeaveOutcome(LeaveResult.FAILED, detail = err))
+            spot?.let { store.removeSpot(it.id) }
+            Log.d("Gleo 메시지 남김: $w ${to.joinToString { it.name }.ifEmpty { "모두" }} $placeName")
+            refreshMessages()
+            changed()
+            done(LeaveOutcome(LeaveResult.SENT, to.map { it.name }, w, placeName, text = body, group = c.name))
+        }
+    }
 
     // 기본 내비(NaviHelper)와 함께 쓰기 -------------------------------------------
 

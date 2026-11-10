@@ -1,4 +1,4 @@
-// 길 위의 안부 서버 (의존성 없음: node server.js)
+// 다온 서버 (의존성 없음: node server.js)
 // - 서클(가족·친구 모임)·프로필·메시지·「들었어요」·일기 저장과 전달
 // - 기기 열쇠: 폰·차 모두 모임을 만들거나 초대 코드로 들어갈 때 열쇠를 받고, 열쇠로만 자기 모임에 접근한다 (로그인 없음)
 // - 키워드 필터, 신고
@@ -53,6 +53,7 @@ function loadDb() {
   d.circles.forEach((c) => {
     c.inviteCode = c.inviteCode || newInviteCode(d);
     c.members.forEach((m, i) => { m.color = m.color || COLORS[i % COLORS.length]; m.title = m.title || ''; });
+    c.members.forEach((m) => { m.code = m.code || newInviteCode(d); }); // 사람마다 내 코드
   });
   return d;
 }
@@ -76,7 +77,7 @@ function newInviteCode(d = db) {
   for (;;) {
     let code = '';
     for (let i = 0; i < 6; i++) code += INVITE_CHARS[crypto.randomInt(0, INVITE_CHARS.length)];
-    if (!d.circles.some((c) => c.inviteCode === code)) return code;
+    if (!d.circles.some((c) => c.inviteCode === code || (c.members || []).some((m) => m.code === code))) return code;
   }
 }
 /** 넣은 초대 코드로 모임 찾기 (대소문자·띄어쓰기·하이픈 무시) */
@@ -84,6 +85,17 @@ function circleByInvite(code) {
   const norm = (x) => String(x || '').toUpperCase().replace(/[\s-]/g, '');
   const want = norm(code);
   return want ? db.circles.find((c) => c.inviteCode && norm(c.inviteCode) === want) : null;
+}
+/** 사람마다 받은 「내 코드」로 그 사람 찾기: { circle, member } */
+function personByInvite(code) {
+  const norm = (x) => String(x || '').toUpperCase().replace(/[\s-]/g, '');
+  const want = norm(code);
+  if (!want) return null;
+  for (const circle of db.circles) {
+    const member = circle.members.find((m) => m.code && norm(m.code) === want);
+    if (member) return { circle, member };
+  }
+  return null;
 }
 function hash(s) {
   return crypto.createHash('sha256').update(String(s)).digest('hex');
@@ -153,7 +165,7 @@ function publicMessage(m) {
 /** 서클을 밖으로 보낼 때는 초대 코드를 뺀다 (초대 코드는 폰의 「가족 초대」에서만) */
 function publicCircle(c) {
   const { inviteCode, ...rest } = c;
-  return rest;
+  return { ...rest, members: c.members.map(({ code, ...m }) => m) };
 }
 
 // 메시지가 열리는 조건. 장소 말고는 차 신호로 판단한다 (판단은 차 안에서).
@@ -182,6 +194,7 @@ function cleanConditions(b, circle) {
   if (h(b.hourFrom) !== undefined && h(b.hourTo) !== undefined) { c.hourFrom = b.hourFrom; c.hourTo = b.hourTo; }
   if (Array.isArray(b.days)) c.days = [...new Set(b.days.filter((d) => Number.isInteger(d) && d >= 1 && d <= 7))];
   if (typeof b.notBefore === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(b.notBefore)) c.notBefore = b.notBefore;
+  if (typeof b.notAfter === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(b.notAfter)) c.notAfter = b.notAfter;
   c.repeat = REPEATS.includes(b.repeat) ? b.repeat : 'once';
   if (Number.isInteger(b.longMin) && b.longMin >= 30 && b.longMin <= 600) c.longMin = b.longMin;
   if (typeof b.regionCode === 'string' && /^\d{2,5}$/.test(b.regionCode)) c.regionCode = b.regionCode;
@@ -274,7 +287,7 @@ route('POST', '/api/circles', async (req, res) => {
   if (!name) return send(res, 400, { error: '내 이름을 써 주세요' });
   if (containsBlocked(name) || containsBlocked(circleName)) return send(res, 422, { error: '쓸 수 없는 이름이에요' });
   if (b.agreed !== true) return send(res, 400, { error: '개인정보 처리에 동의해야 만들 수 있어요' });
-  const member = { id: newId('m'), name, title: cleanName(b.title), color: cleanColor(b.color) };
+  const member = { id: newId('m'), name, title: cleanName(b.title), color: cleanColor(b.color), code: newInviteCode() };
   const circle = { id: newId('c'), name: circleName, type, members: [member], inviteCode: newInviteCode(), createdAt: new Date().toISOString() };
   db.circles.push(circle);
   const { device, key } = addRequester(b, circle, member.id);
@@ -282,13 +295,17 @@ route('POST', '/api/circles', async (req, res) => {
   send(res, 201, { key, circle: publicCircle(circle), memberId: member.id, device: publicDevice(device) });
 });
 
-// 초대 코드로 들어가기: 이 기기의 열쇠를 받는다. 차는 들어간 뒤 「나는 누구」를 고른다 (/api/devices/me/owner)
+// 초대 코드로 들어가기: 이 기기의 열쇠를 받는다.
+// 사람마다 받은 「내 코드」로 들어오면 그 사람 차가 된다 (차 화면에서 주인을 고르지 않는다).
+// 모임 코드는 폰만 (차는 누구 차인지 알 수 없어서 내 코드로만).
 route('POST', '/api/join', async (req, res) => {
   const b = await readBody(req);
-  const circle = circleByInvite(b.inviteCode);
+  const person = personByInvite(b.inviteCode);
+  const circle = person ? person.circle : circleByInvite(b.inviteCode);
   if (!circle) return send(res, 404, { error: '초대 코드가 맞지 않거나 바뀌었어요. 모임 사람에게 새 코드를 받아 주세요' });
+  if (b.device === 'car' && !person) return send(res, 400, { error: '차는 사람마다 받은 「내 코드」로 들어와요. 모임 사람에게 내 코드를 물어봐 주세요' });
   if (b.agreed !== true) return send(res, 400, { error: '개인정보 처리에 동의해야 들어갈 수 있어요' });
-  const { device, key } = addRequester(b, circle, null);
+  const { device, key } = addRequester(b, circle, person && b.device === 'car' ? person.member.id : null);
   saveDb();
   send(res, 201, { key, circle: publicCircle(circle), device: publicDevice(device) });
 });
@@ -345,13 +362,23 @@ route('POST', '/api/devices/:deviceId/delete', guard((req, res, p, { device, cir
 }, { circleParam: false }));
 
 // 초대 코드 보기·바꾸기 (폰·차). 바꾸면 예전 코드로는 못 들어오고, 이미 들어온 기기는 그대로다.
+// people: 사람마다 「내 코드」(그 사람 차가 이 코드로 들어오면 바로 그 사람 차가 된다)
+const invitePeople = (circle) => {
+  let added = false;
+  circle.members.forEach((m) => { if (!m.code) { m.code = newInviteCode(); added = true; } });
+  if (added) saveDb();
+  return circle.members.map((m) => ({ id: m.id, name: m.name, code: m.code }));
+};
 route('GET', '/api/circles/:circleId/invite', guard((req, res, p, { circle }) => {
-  send(res, 200, { inviteCode: circle.inviteCode });
+  send(res, 200, { inviteCode: circle.inviteCode, people: invitePeople(circle) });
 }));
-route('POST', '/api/circles/:circleId/invite/reset', guard((req, res, p, { circle }) => {
-  circle.inviteCode = newInviteCode();
+// memberId가 있으면 그 사람 코드만, 없으면 모임 코드(폰용)를 새로
+route('POST', '/api/circles/:circleId/invite/reset', guard(async (req, res, p, { circle }) => {
+  const b = await readBody(req).catch(() => ({}));
+  const m = b && b.memberId ? circle.members.find((x) => x.id === b.memberId) : null;
+  if (m) m.code = newInviteCode(); else circle.inviteCode = newInviteCode();
   saveDb();
-  send(res, 200, { inviteCode: circle.inviteCode });
+  send(res, 200, { inviteCode: circle.inviteCode, people: invitePeople(circle) });
 }));
 
 // 모임 통째로 지우기 (폰·차): 메시지·목소리·사진·일기·기록·기기 열쇠까지 전부
@@ -397,7 +424,7 @@ route('POST', '/api/circles/:circleId/members', guard(async (req, res, p, { circ
   if (!name) return send(res, 400, { error: '이름을 써 주세요' });
   if (containsBlocked(name)) return send(res, 422, { error: '쓸 수 없는 이름이에요' });
   if (circle.members.some((m) => m.name === name)) return send(res, 409, { error: '같은 이름이 이미 있어요' });
-  circle.members.push({ id: newId('m'), name, title: cleanName(b.title), color: cleanColor(b.color, circle.members.length) });
+  circle.members.push({ id: newId('m'), name, title: cleanName(b.title), color: cleanColor(b.color, circle.members.length), code: newInviteCode() });
   saveDb();
   send(res, 201, publicCircle(circle));
 }));
@@ -581,6 +608,32 @@ route('POST', '/api/messages/:messageId/report', guard(async (req, res, p, ctx) 
   send(res, 200, { ok: true, hidden: msg.hidden });
 }, { circleParam: false }));
 
+// 메시지 고치기 (작성자 본인, 글 메시지의 내용·받는 사람)
+route('POST', '/api/messages/:messageId/edit', guard(async (req, res, p, ctx) => {
+  const msg = myMessage(res, ctx, p.messageId);
+  if (!msg) return;
+  const b = await readBody(req);
+  if (msg.authorId !== b.memberId) return send(res, 403, { error: '본인이 남긴 메시지만 고칠 수 있어요' });
+  if (msg.kind === 'voice') {
+    // 목소리: 새로 녹음한 것으로 통째로 바꾼다 (예전 녹음 파일은 지운다)
+    if (b.audioBase64) {
+      const ext = b.audioExt && /^[a-z0-9]{2,4}$/.test(b.audioExt) ? b.audioExt : 'webm';
+      const file = `v_${crypto.randomBytes(12).toString('hex')}.${ext}`;
+      fs.writeFileSync(path.join(MEDIA_DIR, file), Buffer.from(b.audioBase64, 'base64'));
+      removeMedia(msg.audioUrl);
+      msg.audioUrl = '/media/' + file;
+    }
+  } else if (typeof b.text === 'string') {
+    const t = b.text.trim().slice(0, 300);
+    if (!t) return send(res, 400, { error: '메시지를 써 주세요' });
+    msg.text = t;
+  }
+  if (Array.isArray(b.to)) msg.to = b.to.filter((id) => ctx.circle.members.some((m) => m.id === id));
+  msg.editedAt = new Date().toISOString();
+  saveDb();
+  send(res, 200, { ok: true });
+}, { circleParam: false }));
+
 // 메시지 삭제 (작성자 본인)
 route('POST', '/api/messages/:messageId/delete', guard(async (req, res, p, ctx) => {
   const msg = myMessage(res, ctx, p.messageId);
@@ -715,7 +768,7 @@ http
     }
   })
   .listen(PORT, () => {
-    console.log(`길 위의 안부 서버: http://localhost:${PORT}  (에뮬레이터에서는 http://10.0.2.2:${PORT})`);
+    console.log(`다온 서버: http://localhost:${PORT}  (에뮬레이터에서는 http://10.0.2.2:${PORT})`);
     const demo = db.circles.find((c) => c.id === 'home');
     if (demo && !PROD) console.log(`시연용 모임 「${demo.name}」 초대 링크: http://localhost:${PORT}/?invite=${demo.inviteCode}`);
   });

@@ -59,7 +59,7 @@ object Notifier {
         }
     }
 
-    fun status(): Notification = builder(CH_STATUS).setContentTitle("길 위의 안부").setContentText(statusText().also { lastStatus = it }).setOngoing(true).build()
+    fun status(): Notification = builder(CH_STATUS).setContentTitle("다온").setContentText(statusText().also { lastStatus = it }).setOngoing(true).build()
 
     fun updateStatus() {
         if (!ready) return

@@ -43,6 +43,8 @@ data class PlaceMessage(
     val days: Set<Int> = emptySet(),
     /** 이 날짜(yyyy-MM-dd)부터 */
     val notBefore: String? = null,
+    /** 이 날짜(yyyy-MM-dd)까지 (그날 포함) */
+    val notAfter: String? = null,
     /** once 한 번 · always 매번(하루 한 번) · weekly 주 1회까지 */
     val repeat: String = "once",
     /** 「오래 운전할 때」 기준(분) */
@@ -106,8 +108,19 @@ object Api {
         call("POST", path, body.put("device", "car").put("vinHash", vinHash).put("agreed", true), keepError = true) { text ->
             val o = text?.let { runCatching { JSONObject(it) }.getOrNull() }
             if (o != null && o.has("key")) done(Joined(o.getString("key"), parseCircle(o.getJSONObject("circle")),
-                o.optString("memberId").ifBlank { null }, o.optJSONObject("device")?.optString("name").orEmpty()), null)
+                // 주인: 새 모임은 만든 사람, 내 코드로 들어오면 그 코드의 사람
+                o.optString("memberId").ifBlank { null } ?: o.optJSONObject("device")?.optString("ownerId")?.takeIf { it.isNotBlank() && it != "null" },
+                o.optJSONObject("device")?.optString("name").orEmpty()), null)
             else done(null, o?.optString("error")?.takeIf { it.isNotBlank() })
+        }
+
+    /** 사람마다 「내 코드」 (설정의 「초대」). memberId를 주면 그 사람 코드를 새로 */
+    data class Invitee(val id: String, val name: String, val code: String)
+    fun invitees(resetFor: String? = null, done: (List<Invitee>?) -> Unit) =
+        call(if (resetFor != null) "POST" else "GET", "/api/circles/me/invite" + if (resetFor != null) "/reset" else "",
+            if (resetFor != null) JSONObject().put("memberId", resetFor) else null) { text ->
+            done(text?.let { t -> runCatching { JSONObject(t).getJSONArray("people").let { a -> (0 until a.length()).map { a.getJSONObject(it) }
+                .map { Invitee(it.getString("id"), it.optString("name"), it.getString("code")) } } }.getOrNull() })
         }
 
     /** 초대 코드 보기 · 새로 만들기 (설정의 「초대」) */
@@ -123,8 +136,8 @@ object Api {
     }
 
     /** 차 주인 바꾸기. 성공하면 차 이름 (기본 이름이면 서버가 「○○의 차」로 바꾼다) */
-    fun setOwner(ownerId: String, done: (String?) -> Unit) =
-        call("POST", "/api/devices/me/owner", JSONObject().put("ownerId", ownerId)) { text ->
+    fun setOwner(ownerId: String, k: String? = key, done: (String?) -> Unit) =
+        call("POST", "/api/devices/me/owner", JSONObject().put("ownerId", ownerId), k = k) { text ->
             done(text?.let { runCatching { JSONObject(it).optString("name") }.getOrNull() })
         }
 
@@ -180,6 +193,18 @@ object Api {
         call("POST", "/api/circles/$circleId/messages", body, keepError = true, k = k) { text ->
             val o = text?.let { runCatching { JSONObject(it) }.getOrNull() }
             done(if (o != null && o.has("id")) null else o?.optString("error")?.takeIf { it.isNotBlank() } ?: "서버에 연결하지 못했어요")
+        }
+
+    /** 글 메시지의 내용(과 받는 사람)을 고친다. 실패하면 오류 문구, 성공하면 null. */
+    fun editMessage(messageId: String, memberId: String, text: String?, to: List<String>? = null, audioBase64: String? = null, k: String? = key, done: (String?) -> Unit) =
+        call("POST", "/api/messages/$messageId/edit",
+            JSONObject().put("memberId", memberId).apply {
+                text?.let { put("text", it) }
+                to?.let { put("to", JSONArray(it)) }
+                audioBase64?.let { put("audioBase64", it).put("audioExt", "m4a") } // 목소리: 예전 녹음을 이것으로 바꾼다
+            }, keepError = true, k = k) { body ->
+            val o = body?.let { runCatching { JSONObject(it) }.getOrNull() }
+            done(if (o?.optBoolean("ok") == true) null else o?.optString("error")?.takeIf { it.isNotBlank() } ?: "서버에 연결하지 못했어요")
         }
 
     fun deleteMessage(messageId: String, memberId: String, k: String? = key, done: (Boolean) -> Unit) =
@@ -307,6 +332,7 @@ object Api {
             hourTo = if (m.has("hourTo")) m.getInt("hourTo") else null,
             days = m.optJSONArray("days")?.let { a -> (0 until a.length()).map { i -> a.getInt(i) }.toSet() } ?: emptySet(),
             notBefore = m.optString("notBefore").ifBlank { null },
+            notAfter = m.optString("notAfter").ifBlank { null },
             repeat = m.optString("repeat", "once").ifBlank { "once" },
             longMin = m.optInt("longMin", 120),
             regionCode = m.optString("regionCode").ifBlank { null },

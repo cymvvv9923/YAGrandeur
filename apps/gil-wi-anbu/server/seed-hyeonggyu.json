@@ -9,70 +9,80 @@
           "id": "dad",
           "name": "아버지",
           "color": "blue",
-          "title": "아버지"
+          "title": "아버지",
+          "code": "demo-dad"
         },
         {
           "id": "mom",
           "name": "어머니",
           "color": "pink",
-          "title": "어머니"
+          "title": "어머니",
+          "code": "demo-mom"
         },
         {
           "id": "yongmin",
           "name": "용민",
           "color": "green",
-          "title": ""
+          "title": "",
+          "code": "demo-yongmin"
         },
         {
           "id": "hyeonggyu",
           "name": "형규",
           "color": "orange",
-          "title": ""
+          "title": "",
+          "code": "demo-home"
         },
         {
           "id": "wonwoo",
           "name": "원우",
           "color": "purple",
-          "title": ""
+          "title": "",
+          "code": "demo-wonwoo"
         },
         {
           "id": "miseong",
           "name": "미성",
           "color": "teal",
-          "title": ""
+          "title": "",
+          "code": "demo-miseong"
         }
       ],
-      "inviteCode": "demo-home"
+      "inviteCode": "demo-home-all"
     },
     {
       "id": "friends",
       "name": "동창 모임",
       "type": "friends",
-      "inviteCode": "demo-friends",
+      "inviteCode": "demo-friends-all",
       "members": [
         {
           "id": "f_hg",
           "name": "형규",
           "color": "orange",
-          "title": ""
+          "title": "",
+          "code": "demo-friends"
         },
         {
           "id": "f_jh",
           "name": "지훈",
           "color": "teal",
-          "title": ""
+          "title": "",
+          "code": "demo-f-jh"
         },
         {
           "id": "f_sb",
           "name": "수빈",
           "color": "pink",
-          "title": ""
+          "title": "",
+          "code": "demo-f-sb"
         },
         {
           "id": "f_th",
           "name": "태호",
           "color": "purple",
-          "title": ""
+          "title": "",
+          "code": "demo-f-th"
         }
       ]
     }

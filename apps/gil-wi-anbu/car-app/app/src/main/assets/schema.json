@@ -1,17 +1,25 @@
 {
   "packageName": "ai.gilwi.anbu",
-  "appDescription": "Gil-wi Anbu lets family and friends leave voice messages that open on the road. While driving, the driver can save the current spot by voice and turn it into a message after parking.",
+  "invokeWord": "다온",
+  "appDescription": "DAON (다온, '다녀간 곳에 온기를 남기다') lets a family or friends group leave a few warm words at a place or a driving moment. The words are played back later in the other members' cars when they pass that place or meet that moment.",
   "version": "0.1.0",
   "actionCalls": [
     {
       "type": "function",
       "function": {
         "name": "SAVE_SPOT",
-        "description": "Save the car's current location as a temporary spot while driving, so the driver can leave a message there after parking. Use when the user says things like 'save this spot' or 'remember this place'.",
+        "description": "Mark the car's current location as a temporary DAON spot for one of the driver's groups, such as family or friends, so the driver can leave warm words there after parking.",
         "parameters": {
           "type": "object",
           "properties": {
-            "memo": { "type": "string", "description": "Optional short note the driver said about this spot, in the driver's own words (e.g. 'nice coffee shop')." }
+            "memo": {
+              "type": "string",
+              "description": "Optional short label for the spot in the driver's own words."
+            },
+            "group": {
+              "type": "string",
+              "description": "The group this spot is for, as the driver said it: a group type such as family, friends or couple, or the group's name. Omit to use the current group."
+            }
           },
           "required": []
         },
@@ -21,18 +29,57 @@
     {
       "type": "function",
       "function": {
-        "name": "UNDO_SPOT",
-        "description": "Delete the most recently saved temporary spot. Use when the user says things like 'cancel what I just saved'.",
-        "parameters": { "type": "object", "properties": {}, "required": [] },
+        "name": "LEAVE_DAON",
+        "description": "Leave a few warm DAON words for one of the driver's groups, such as family or friends, at the current place or a driving moment, to be played back later in the other members' cars.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "description": "The words as the listeners will hear them: one short natural sentence spoken directly to them in the driver's own tone, without request words or the app name."
+            },
+            "group": {
+              "type": "string",
+              "description": "The group these words are for, as the driver said it: a group type such as family, friends or couple, or the group's name. Omit to use the current group."
+            },
+            "when": {
+              "type": "string",
+              "enum": [
+                "place",
+                "rain",
+                "night",
+                "together",
+                "door",
+                "start",
+                "park",
+                "long",
+                "region",
+                "warning"
+              ],
+              "description": "When the words are played back: place = passing the current location (default), rain = rainy day, night = night drive, together = someone in the passenger seat, door = getting in the car, start = starting the car, park = parking at the current location, long = long drive, region = entering the current region, warning = a warning light turns on."
+            },
+            "useSavedSpot": {
+              "type": "boolean",
+              "description": "True to leave the words at the spot saved most recently instead of the current location."
+            }
+          },
+          "required": [
+            "text"
+          ]
+        },
         "component": "service"
       }
     },
     {
       "type": "function",
       "function": {
-        "name": "COUNT_SPOTS",
-        "description": "Tell how many temporary spots the driver saved today. Use when the user asks how many spots they saved.",
-        "parameters": { "type": "object", "properties": {}, "required": [] },
+        "name": "UNDO_SPOT",
+        "description": "Delete the temporary DAON spot the driver marked most recently.",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": []
+        },
         "component": "service"
       }
     }

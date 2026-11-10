@@ -41,6 +41,22 @@ object LocalServer {
         if (!dbFile.exists()) copySeed()
         db = runCatching { JSONObject(dbFile.readText()) }.getOrElse { copySeed(); JSONObject(dbFile.readText()) }
         copyMedia()
+        addPersonCodes()
+    }
+
+    /** 예전 데이터(사람마다 코드가 없던 때): 차 주인(민수)의 코드를 예전 모임 코드로, 모임 코드는 폰용(-all)으로 */
+    private fun addPersonCodes() {
+        var changed = false
+        circles().forEach { c ->
+            val a = c.getJSONArray("members")
+            val ms = (0 until a.length()).map { a.getJSONObject(it) }
+            if (ms.all { it.optString("code").isNotEmpty() }) return@forEach
+            val old = c.optString("inviteCode")
+            ms.forEach { m -> if (m.optString("code").isEmpty()) m.put("code", if (m.getString("id") in setOf("minsu", "f_minsu") && old.isNotEmpty()) old else newInviteCode()) }
+            if (old.isNotEmpty() && ms.any { it.optString("code") == old }) c.put("inviteCode", "$old-all")
+            changed = true
+        }
+        if (changed) save()
     }
 
     /** 시연 데이터로 되돌리기 (모임·메시지·기기 열쇠 모두 처음 상태) */
@@ -106,8 +122,13 @@ object LocalServer {
             m == "POST" && r == listOf("messages") -> return postMessage(b, circle)
             m == "GET" && r == listOf("cars") -> return ok(JSONArray(devices().filter { it.getString("circleId") == cid && it.getString("kind") == "car" }
                 .map { publicDevice(it).put("me", it.getString("id") == device.getString("id")) }))
-            m == "GET" && r == listOf("invite") -> return ok(JSONObject().put("inviteCode", circle.optString("inviteCode")))
-            m == "POST" && r == listOf("invite", "reset") -> { circle.put("inviteCode", newInviteCode()); save(); return ok(JSONObject().put("inviteCode", circle.getString("inviteCode"))) }
+            m == "GET" && r == listOf("invite") -> return ok(JSONObject().put("inviteCode", circle.optString("inviteCode")).put("people", invitePeople(circle)))
+            m == "POST" && r == listOf("invite", "reset") -> {
+                val who = b.optString("memberId").takeIf { it.isNotEmpty() }?.let { member(it) }
+                if (who != null) who.put("code", newInviteCode()) else circle.put("inviteCode", newInviteCode())
+                save()
+                return ok(JSONObject().put("inviteCode", circle.getString("inviteCode")).put("people", invitePeople(circle)))
+            }
             m == "GET" && r == listOf("feed") -> {
                 val msgs = messages().filter { it.getString("circleId") == cid }.associateBy { it.getString("id") }
                 val heard = JSONArray()
@@ -150,7 +171,7 @@ object LocalServer {
             m == "POST" && r == listOf("members") -> {
                 val n = clean(b.optString("name")); if (n.isEmpty()) return err(400, "이름을 써 주세요")
                 if ((0 until members.length()).any { members.getJSONObject(it).getString("name") == n }) return err(409, "같은 이름이 이미 있어요")
-                members.put(JSONObject().put("id", newId("m")).put("name", n).put("title", clean(b.optString("title"))).put("color", color(b.optString("color"), members.length())))
+                members.put(JSONObject().put("id", newId("m")).put("code", newInviteCode()).put("name", n).put("title", clean(b.optString("title"))).put("color", color(b.optString("color"), members.length())))
                 save(); return ok(publicCircle(circle), 201)
             }
             m == "POST" && r == listOf("members", "order") -> {
@@ -222,6 +243,29 @@ object LocalServer {
                     .put("at", now).put("lastAt", now).put("carId", device.getString("id")).put("lastCarId", device.getString("id")))
             }
             "report" -> { msg.put("hidden", true) }
+            "edit" -> {
+                // 글 메시지의 내용·받는 사람 고치기 (목소리는 고칠 수 없고 지우고 다시 남긴다)
+                if (msg.getString("authorId") != b.optString("memberId")) return err(403, "본인이 남긴 메시지만 고칠 수 있어요")
+                if (msg.optString("kind") == "voice") {
+                    // 목소리: 새로 녹음한 것으로 통째로 바꾼다 (예전 녹음 파일은 지운다)
+                    val a = b.optString("audioBase64")
+                    if (a.isNotEmpty()) {
+                        val f = "v_${hex(12)}.m4a"
+                        File(mediaDir, f).writeBytes(android.util.Base64.decode(a, android.util.Base64.DEFAULT))
+                        removeMedia(msg.optString("audioUrl"))
+                        msg.put("audioUrl", "/media/$f")
+                    }
+                } else if (b.has("text")) {
+                    val t = b.optString("text").trim().take(300)
+                    if (t.isEmpty()) return err(400, "메시지를 써 주세요")
+                    msg.put("text", t)
+                }
+                b.optJSONArray("to")?.let { a ->
+                    val ids = circle.getJSONArray("members").let { ms -> (0 until ms.length()).map { ms.getJSONObject(it).getString("id") } }
+                    msg.put("to", JSONArray((0 until a.length()).map { a.getString(it) }.filter { it in ids }))
+                }
+                msg.put("editedAt", now())
+            }
             "delete" -> {
                 if (msg.getString("authorId") != b.optString("memberId")) return err(403, "본인이 남긴 메시지만 지울 수 있어요")
                 removeMedia(msg.optString("audioUrl"))
@@ -254,6 +298,7 @@ object LocalServer {
         if (b.has("hourFrom") && b.has("hourTo")) msg.put("hourFrom", b.getInt("hourFrom")).put("hourTo", b.getInt("hourTo"))
         b.optJSONArray("days")?.let { msg.put("days", it) }
         b.optString("notBefore").takeIf { Regex("""\d{4}-\d{2}-\d{2}""").matches(it) }?.let { msg.put("notBefore", it) }
+        b.optString("notAfter").takeIf { Regex("""\d{4}-\d{2}-\d{2}""").matches(it) }?.let { msg.put("notAfter", it) }
         msg.put("repeat", b.optString("repeat").takeIf { it in setOf("once", "always", "weekly") } ?: "once")
         if (b.has("longMin")) msg.put("longMin", b.getInt("longMin").coerceIn(30, 600))
         b.optString("regionCode").takeIf { Regex("""\d{2,5}""").matches(it) }?.let { msg.put("regionCode", it) }
@@ -275,7 +320,7 @@ object LocalServer {
         val type = b.optString("type").takeIf { it in CIRCLE_TYPES } ?: "family"
         val name = clean(b.optString("memberName")); if (name.isEmpty()) return err(400, "내 이름을 써 주세요")
         if (!b.optBoolean("agreed")) return err(400, "개인정보 처리에 동의해야 만들 수 있어요")
-        val member = JSONObject().put("id", newId("m")).put("name", name).put("title", clean(b.optString("title"))).put("color", color(b.optString("color")))
+        val member = JSONObject().put("id", newId("m")).put("code", newInviteCode()).put("name", name).put("title", clean(b.optString("title"))).put("color", color(b.optString("color")))
         val circle = JSONObject().put("id", newId("c")).put("name", clean(b.optString("circleName")).ifEmpty { if (type == "family") "우리집" else "우리 모임" })
             .put("type", type).put("members", JSONArray().put(member)).put("inviteCode", newInviteCode()).put("createdAt", now())
         db.getJSONArray("circles").put(circle)
@@ -284,13 +329,19 @@ object LocalServer {
         return ok(JSONObject().put("key", key).put("circle", publicCircle(circle)).put("memberId", member.getString("id")).put("device", publicDevice(device)), 201)
     }
 
+    /** 사람마다 받은 「내 코드」로 들어오면 그 사람 차. 모임 코드는 폰용이라 차는 못 들어온다 (server.js /api/join과 같다) */
     private fun join(b: JSONObject): Reply {
         val norm = { s: String -> s.uppercase().replace(Regex("[\\s-]"), "") }
         val want = norm(b.optString("inviteCode"))
-        val circle = circles().firstOrNull { want.isNotEmpty() && norm(it.optString("inviteCode")) == want }
+        var owner: JSONObject? = null
+        val circle = circles().firstOrNull { c ->
+            owner = c.getJSONArray("members").let { a -> (0 until a.length()).map { a.getJSONObject(it) } }.firstOrNull { want.isNotEmpty() && norm(it.optString("code")) == want }
+            owner != null
+        } ?: circles().firstOrNull { want.isNotEmpty() && norm(it.optString("inviteCode")) == want }
             ?: return err(404, "초대 코드가 맞지 않거나 바뀌었어요. 모임 사람에게 새 코드를 받아 주세요")
+        if (owner == null) return err(400, "차는 사람마다 받은 「내 코드」로 들어와요. 모임 사람에게 내 코드를 물어봐 주세요")
         if (!b.optBoolean("agreed")) return err(400, "개인정보 처리에 동의해야 들어갈 수 있어요")
-        val (device, key) = addCar(b, circle, null)
+        val (device, key) = addCar(b, circle, owner!!.getString("id"))
         save()
         return ok(JSONObject().put("key", key).put("circle", publicCircle(circle)).put("device", publicDevice(device)), 201)
     }
@@ -315,7 +366,17 @@ object LocalServer {
     private fun messages() = arr("messages")
     private fun devices() = arr("devices")
     private fun deviceOf(key: String?): JSONObject? = key?.let { k -> val h = sha(k); devices().firstOrNull { it.optString("keyHash") == h } }
-    private fun publicCircle(c: JSONObject) = JSONObject(c.toString()).apply { remove("inviteCode") }
+    private fun publicCircle(c: JSONObject) = JSONObject(c.toString()).apply {
+        remove("inviteCode")
+        optJSONArray("members")?.let { a -> (0 until a.length()).forEach { a.getJSONObject(it).remove("code") } }
+    }
+    private fun invitePeople(circle: JSONObject): JSONArray {
+        val a = circle.getJSONArray("members")
+        var added = false
+        (0 until a.length()).map { a.getJSONObject(it) }.forEach { if (it.optString("code").isEmpty()) { it.put("code", newInviteCode()); added = true } }
+        if (added) save()
+        return JSONArray((0 until a.length()).map { a.getJSONObject(it) }.map { JSONObject().put("id", it.getString("id")).put("name", it.optString("name")).put("code", it.getString("code")) })
+    }
     private fun publicMessage(m: JSONObject) = JSONObject(m.toString()).apply { remove("reports"); if (!has("when")) put("when", "place") }
     private fun publicDevice(d: JSONObject) = JSONObject().put("id", d.getString("id")).put("kind", d.getString("kind")).put("name", d.optString("name"))
         .put("ownerId", d.opt("ownerId") ?: JSONObject.NULL).put("createdAt", d.optString("createdAt"))
@@ -330,7 +391,7 @@ object LocalServer {
         val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
         while (true) {
             val c = (1..6).map { chars[rnd.nextInt(chars.length)] }.joinToString("")
-            if (circles().none { it.optString("inviteCode") == c }) return c
+            if (circles().none { k -> k.optString("inviteCode") == c || k.getJSONArray("members").let { a -> (0 until a.length()).any { a.getJSONObject(it).optString("code") == c } } }) return c
         }
     }
 }
