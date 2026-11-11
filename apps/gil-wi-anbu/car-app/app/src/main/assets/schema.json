@@ -30,37 +30,21 @@
       "type": "function",
       "function": {
         "name": "LEAVE_DAON",
-        "description": "Leave a few warm DAON words for one of the driver's groups, such as family or friends, at the current place or a driving moment, to be played back later in the other members' cars.",
+        "description": "Leave a few warm DAON words for one of the driver's groups, such as family or friends, to be played back later in the other members' cars. When they are played back is set in advance in the app, so do not ask the driver about timing.",
         "parameters": {
           "type": "object",
           "properties": {
             "text": {
               "type": "string",
-              "description": "The words as the listeners will hear them: one short natural sentence spoken directly to them in the driver's own tone, without request words or the app name."
+              "description": "The words as the listeners will hear them: one short natural sentence spoken directly to them in the driver's own tone, without request words, the app name, or the group name."
             },
             "group": {
               "type": "string",
               "description": "The group these words are for, as the driver said it: a group type such as family, friends or couple, or the group's name. Omit to use the current group."
             },
-            "when": {
-              "type": "string",
-              "enum": [
-                "place",
-                "rain",
-                "night",
-                "together",
-                "door",
-                "start",
-                "park",
-                "long",
-                "region",
-                "warning"
-              ],
-              "description": "When the words are played back: place = passing the current location (default), rain = rainy day, night = night drive, together = someone in the passenger seat, door = getting in the car, start = starting the car, park = parking at the current location, long = long drive, region = entering the current region, warning = a warning light turns on."
-            },
             "useSavedSpot": {
               "type": "boolean",
-              "description": "True to leave the words at the spot saved most recently instead of the current location."
+              "description": "True only when the driver explicitly refers to the spot they saved earlier; otherwise leave this out so the words stay at the current location."
             }
           },
           "required": [
@@ -73,11 +57,20 @@
     {
       "type": "function",
       "function": {
-        "name": "UNDO_SPOT",
-        "description": "Delete the temporary DAON spot the driver marked most recently.",
+        "name": "RECORD_DAON",
+        "description": "Start recording a short spoken message from the driver for one of the driver's groups, such as family or friends; the app then asks for the words and records them itself, so the request does not need to contain the words.",
         "parameters": {
           "type": "object",
-          "properties": {},
+          "properties": {
+            "group": {
+              "type": "string",
+              "description": "The exact name of one of the driver's groups, only when the driver said it right before the request. Leave it out otherwise; the current group is used."
+            },
+            "useSavedSpot": {
+              "type": "boolean",
+              "description": "True only when the driver explicitly refers to the spot they saved earlier; otherwise leave this out so the words stay at the current location."
+            }
+          },
           "required": []
         },
         "component": "service"

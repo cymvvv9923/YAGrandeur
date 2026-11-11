@@ -93,7 +93,7 @@ class TripStore(context: Context) {
 
     /** 모든 모임에서 빠졌다: 이 차에 저장된 기록을 모두 지운다 (설정은 남긴다) */
     fun clearPairing() {
-        device.edit().remove("key").remove("carName").remove("ownerId").remove("memberships").remove("activeCircle").remove("found").remove("spots").apply()
+        device.edit().remove("key").remove("carName").remove("ownerId").remove("memberships").remove("activeCircle").remove("found").remove("spots").remove("pausedCircles").apply()
         val keep = theme
         prefs.edit().clear().putString("theme", keep).apply()
     }
@@ -102,6 +102,16 @@ class TripStore(context: Context) {
     var demoSkipped: Boolean
         get() = device.getBoolean("demoSkipped", false)
         set(v) = device.edit().putBoolean("demoSkipped", v).apply()
+
+    /**
+     * 지금 타는 사람이 들어 있지 않은 모임 (쉬는 중). 다른 사람이 자기 코드로 이 차에 들어오면,
+     * 그 사람이 없는 모임의 안부는 이 차에서 열지도 보여 주지도 않는다. 주인이 돌아오면 다시 켠다.
+     */
+    var pausedCircles: Set<String>
+        get() = device.getStringSet("pausedCircles", emptySet())!!
+        set(v) = device.edit().putStringSet("pausedCircles", v).apply()
+    /** 쉬지 않는 모임만 (재생·지도·말로 남기기에 쓴다) */
+    val liveMemberships: List<Membership> get() = pausedCircles.let { p -> memberships.filter { it.circleId !in p } }
 
     /** 메인 지도에서 가린 모임·사람 (이 차 안에만) */
     var hiddenCircles: Set<String>
@@ -131,6 +141,16 @@ class TripStore(context: Context) {
         set(v) = updateActive { it.copy(ownerId = v) }
 
     /** 옆자리에 누가 있으면 바로 틀지 않고 먼저 물어본다 (기본 켬) */
+    /** Gleo로 말로 남길 때 쓰는 조건 (메시지 화면에서 고른다). 기본은 「이 자리를 지나면」 */
+    var voiceWhen: String
+        get() = prefs.getString("voiceWhen", "place") ?: "place"
+        set(v) = prefs.edit().putString("voiceWhen", v).apply()
+
+    /** 차를 세웠을 때 안부가 열리면 앱 화면을 앞으로 띄울지. 기본은 띄우지 않고 소리로만 */
+    var popUpScreen: Boolean
+        get() = prefs.getBoolean("popUpScreen", false)
+        set(v) = prefs.edit().putBoolean("popUpScreen", v).apply()
+
     var askWithPassenger: Boolean
         get() = prefs.getBoolean("askWithPassenger", true)
         set(v) = prefs.edit().putBoolean("askWithPassenger", v).apply()
@@ -222,6 +242,11 @@ class TripStore(context: Context) {
         }
 
     /** 주행하다가 P로 바꾼 횟수 = 쉬어간 횟수. */
+    /** 마지막으로 「시동 걸 때」를 연 시각. 앱만 다시 켜진 것을 시동으로 보지 않게 (날이 바뀌어도 둔다) */
+    var lastStartAt: Long
+        get() = device.getLong("lastStartAt", 0L)
+        set(v) { device.edit().putLong("lastStartAt", v).apply() }
+
     fun onParkedAfterDriving() {
         resetIfNewDay()
         prefs.edit().putInt("rests", prefs.getInt("rests", 0) + 1).apply()

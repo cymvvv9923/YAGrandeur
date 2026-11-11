@@ -10,6 +10,9 @@
   h1 { font-size:22px; } h2 { font-size:17px; margin-top:28px; }
   table { border-collapse:collapse; width:100%; font-size:14px; background:#fff; }
   th, td { border:1px solid #e0e1e6; padding:8px; text-align:left; vertical-align:top; }
+  /* 한글은 낱말 단위로 줄을 바꾸고, 짧은 머리글(「어디서」 등)은 한 줄로 */
+  th, td { word-break:keep-all; overflow-wrap:anywhere; }
+  th { white-space:nowrap; }
   .note { background:#fff4e5; border:1px solid #f0c890; padding:10px 12px; border-radius:8px; font-size:14px; }
 </style>
 </head>

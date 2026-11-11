@@ -64,16 +64,16 @@ object GleoActions {
         val raw = intent.action
         Log.d("Gleo 수신($via): action=$raw extras=${intent.extras?.keySet()?.joinToString()}")
         val action = raw?.removePrefix(PREFIX)
-        if (action == null || action !in setOf("SAVE_SPOT", "UNDO_SPOT", "COUNT_SPOTS", "LEAVE_DAON", "LEAVE_ROAD_NOTE")) { onDone(); return }
+        if (action == null || action !in setOf("SAVE_SPOT", "UNDO_SPOT", "COUNT_SPOTS", "LEAVE_DAON", "LEAVE_ROAD_NOTE", "RECORD_DAON")) { onDone(); return }
         Notifier.init(context)
         Engine.start(context)
 
         var finished = false
-        fun finish(status: String, english: String, korean: String) {
+        fun finish(status: String, english: String, korean: String, mode: String = "silent") {
             if (finished) return
             finished = true
             Engine.say(korean)
-            respond(context, action, status, english)
+            respond(context, action, status, english, mode)
             onDone()
         }
         Handler(Looper.getMainLooper()).postDelayed({ finish("fail", "That took too long.", "처리하는 데 시간이 걸려 확인하지 못했어요.") }, TIMEOUT_MS)
@@ -84,6 +84,16 @@ object GleoActions {
 
         // LEAVE_DAON이 지금 이름. 「NOTE」가 메시지 기능처럼 읽혀 바꿨고, 예전 이름도 받는다
         if (action == "LEAVE_DAON" || action == "LEAVE_ROAD_NOTE") { leaveNote(intent, params, ::str, ::finish); return }
+
+        // 「다온, 녹음해 줘」: 글레오에는 바로 답하고(조용히), 남길 말은 이 앱이 직접 묻고 받는다 (VoiceNote)
+        if (action == "RECORD_DAON") {
+            // 글 방식도 앱이 직접 받는다 (VoiceNote). 글레오에게 되묻게(asking) 해 봤지만, 대답을 글레오가 새 말로 다시 분류해
+            // 「안녕」 같은 짧은 대답이 잡담으로 빠졌다(11/10) → 되돌림.
+            val busy = VoiceNote.busy
+            finish(if (busy) "fail" else "success", if (busy) "Already recording." else "Recording the driver's words now.", "")
+            if (!busy) VoiceNote.start(context, str("group"), params.optBoolean("useSavedSpot", false))
+            return
+        }
 
         val memo = str("memo").take(MEMO_MAX)
         val (status, english, korean) = when (action) {
@@ -117,7 +127,8 @@ object GleoActions {
      */
     private fun leaveNote(intent: Intent, params: JSONObject, str: (String) -> String, finish: (String, String, String) -> Unit) {
         // Gleo가 이미 바르게 풀어 보냈으면 그대로 두고, "조심히 오라고" 같은 간접 인용만 말 그대로 고친다
-        val text = direct(str("text").ifBlank { str("message") })
+        // 받는 그룹 이름이 내용 앞에 섞여 오면 뗀다: 「가족한테 조심히 와」 → 「조심히 와」 (듣는 사람에게 그대로 들리므로)
+        val text = stripGroup(direct(str("text").ifBlank { str("message") }), str("group"))
         // to는 "엄마" · "엄마,아빠" · ["엄마","아빠"] 모두 받는다
         val toList = params.optJSONArray("to")?.let { a -> (0 until a.length()).map { a.optString(it) } }
             ?: str("to").split(',', '、').toList()
@@ -153,8 +164,22 @@ object GleoActions {
      * Gleo는 말을 이름·때·내용으로 나눠서 주는데 내용이 "~라고"로 끝나기 쉽다. 스키마 설명으로 먼저 풀어 달라고 하고,
      * 그래도 남은 흔한 꼴만 여기서 고친다. 모르는 꼴은 건드리지 않는다.
      */
+    /**
+     * 내용 맨 앞의 받는 쪽 부르는 말을 뗀다: 「가족 오늘 고마웠어」 → 「오늘 고마웠어」, 「친구들한테 주말에 보자」 → 「주말에 보자」.
+     * Gleo가 그룹을 group으로 따로 주면서도 내용에 같이 남기는 경우가 있다. 다 떼면 비는 경우엔 그대로 둔다.
+     */
+    fun stripGroup(text: String, group: String): String {
+        val words = (listOf(group.trim()) + Engine.circles.values.map { it.name } + GROUP_CALLS)
+            .filter { it.isNotBlank() }.distinct().sortedByDescending { it.length }
+        if (words.isEmpty()) return text
+        val r = Regex("^(" + words.joinToString("|") { Regex.escape(it) } + ")(들)?(한테|에게|께|에|아|야)?[,\\s]+")
+        return text.replace(r, "").trim().ifEmpty { text }
+    }
+
+    private val GROUP_CALLS = listOf("가족", "식구", "친구", "동기", "연인", "커플", "애인", "여러분", "모두")
+
     fun direct(raw: String): String {
-        var t = raw.trim().trim('"', '\'', '「', '」', '“', '”').trim()
+        var t = raw.trim().trim('"', '\'', '「', '」', '“', '”', '‘', '’').trim()
         t = t.replace(Regex("(^|\\s)(다온|DAON|로드레터|RoadLetter)(에서|에게|에|으로|로|한테)?(?=\\s|[,.!?]|$)", RegexOption.IGNORE_CASE), " ").trim().trimStart(',', ' ')
         // 끝의 부탁("남겨 줘", "전해 줘")은 내용이 아니다
         t = t.replace(Regex("\\s*(남겨|전해|말해|얘기해|이야기해)\\s*(줘|줘요|주세요|줄래|줄래요)[.!?]*$"), "").trim()
@@ -182,13 +207,14 @@ object GleoActions {
         return if (jong == 0 || jong == 8) "로" else "으로"
     }
 
-    private fun respond(context: Context, function: String, status: String, message: String) {
+    /** mode: silent(이 앱이 한국어로 직접 읽음) · voice(글레오가 말함, 되물을 때) */
+    private fun respond(context: Context, function: String, status: String, message: String, mode: String = "silent") {
         val response = JSONObject()
             .put("functionName", function)
             .put("status", status)
             .put("message", message)
             .put("data", JSONObject())
-            .put("mode", "silent") // 이 앱이 한국어로 직접 읽는다
+            .put("mode", mode)
         context.sendBroadcast(Intent(RESPONSE_ACTION)
             .putExtra("packageName", context.packageName)
             .putExtra("response", response.toString()))

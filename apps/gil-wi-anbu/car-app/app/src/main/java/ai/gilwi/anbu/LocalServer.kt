@@ -44,7 +44,7 @@ object LocalServer {
         addPersonCodes()
     }
 
-    /** 예전 데이터(사람마다 코드가 없던 때): 차 주인(민수)의 코드를 예전 모임 코드로, 모임 코드는 폰용(-all)으로 */
+    /** 예전 데이터(사람마다 코드가 없던 때): 차 주인(원우·예전 민수)의 코드를 예전 모임 코드로, 모임 코드는 폰용(-all)으로 */
     private fun addPersonCodes() {
         var changed = false
         circles().forEach { c ->
@@ -52,7 +52,7 @@ object LocalServer {
             val ms = (0 until a.length()).map { a.getJSONObject(it) }
             if (ms.all { it.optString("code").isNotEmpty() }) return@forEach
             val old = c.optString("inviteCode")
-            ms.forEach { m -> if (m.optString("code").isEmpty()) m.put("code", if (m.getString("id") in setOf("minsu", "f_minsu") && old.isNotEmpty()) old else newInviteCode()) }
+            ms.forEach { m -> if (m.optString("code").isEmpty()) m.put("code", if (m.getString("id") in setOf("minsu", "f_minsu", "wonwoo", "f_wonwoo", "c_wonwoo") && old.isNotEmpty()) old else newInviteCode()) }
             if (old.isNotEmpty() && ms.any { it.optString("code") == old }) c.put("inviteCode", "$old-all")
             changed = true
         }

@@ -6,10 +6,11 @@ import android.util.Base64
 import java.io.File
 
 /** 차에서 목소리 메시지 녹음 (m4a, 최대 MAX_SECONDS초). 정차 중에만 쓴다. */
-class Recorder(private val context: Context) {
+/** fileName: 화면 남기기(leave.m4a)와 운전 중 「녹음해 줘」(voice_note.m4a)가 서로 덮어쓰지 않게 따로 쓴다 */
+class Recorder(private val context: Context, private val fileName: String = "leave.m4a") {
 
     private var rec: MediaRecorder? = null
-    private val file get() = File(context.cacheDir, "leave.m4a")
+    private val file get() = File(context.cacheDir, fileName)
     var hasRecording = false
         private set
     val recording get() = rec != null
@@ -50,6 +51,9 @@ class Recorder(private val context: Context) {
         r.release()
         hasRecording = file.length() > 0
     }
+
+    /** 지난번 부른 뒤로 가장 큰 소리 (0~32767). 말이 끝났는지 볼 때 쓴다 */
+    fun amplitude(): Int = runCatching { rec?.maxAmplitude ?: 0 }.getOrDefault(0)
 
     fun clear() { stop(); hasRecording = false; file.delete() }
 

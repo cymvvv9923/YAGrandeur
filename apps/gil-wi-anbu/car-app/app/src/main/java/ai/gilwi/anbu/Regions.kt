@@ -82,7 +82,15 @@ object Regions {
     }
     private const val NEAR_DEG = 0.05
     /** 시·군·구가 속한 시·도 */
-    fun provinceOfDistrict(d: Region) = provinces.firstOrNull { it.code == d.code.take(2) }
+    /** 섬을 뺀 본토: 점이 가장 넓게 퍼진 덩어리 (지도를 맞출 때 서해 5도 같은 먼 섬에 끌려가지 않게) */
+    fun mainRing(r: Region): DoubleArray? = r.rings.maxByOrNull { ring ->
+        var s = Double.MAX_VALUE; var n = -Double.MAX_VALUE; var w = Double.MAX_VALUE; var e = -Double.MAX_VALUE
+        var i = 0
+        while (i < ring.size) { s = minOf(s, ring[i]); n = maxOf(n, ring[i]); w = minOf(w, ring[i + 1]); e = maxOf(e, ring[i + 1]); i += 2 }
+        (n - s) * (e - w)
+    }
+
+        fun provinceOfDistrict(d: Region) = provinces.firstOrNull { it.code == d.code.take(2) }
 
     private fun inRing(r: DoubleArray, lat: Double, lon: Double): Boolean {
         var inside = false

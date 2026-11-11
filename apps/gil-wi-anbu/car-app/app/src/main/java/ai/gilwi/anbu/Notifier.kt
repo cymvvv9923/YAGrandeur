@@ -19,6 +19,8 @@ object Notifier {
     private const val DRIVER_ID = 3
     private const val CH_STATUS = "status"
     private const val CH_MESSAGE = "message"
+    /** 소리로만 들려줄 때: 화면 위로 튀어나오지 않고 알림 목록에만 */
+    private const val CH_QUIET = "quiet"
 
     private lateinit var app: Context
     private val nm get() = app.getSystemService(NotificationManager::class.java)
@@ -28,6 +30,7 @@ object Notifier {
         app = context.applicationContext
         nm.createNotificationChannel(NotificationChannel(CH_STATUS, "동작 상태", NotificationManager.IMPORTANCE_LOW))
         nm.createNotificationChannel(NotificationChannel(CH_MESSAGE, "길 위의 메시지", NotificationManager.IMPORTANCE_HIGH))
+        nm.createNotificationChannel(NotificationChannel(CH_QUIET, "듣는 중 (조용히)", NotificationManager.IMPORTANCE_LOW))
     }
 
     private val ready get() = ::app.isInitialized
@@ -91,8 +94,10 @@ object Notifier {
         if (Engine.parked != true) { nm.cancel(MESSAGE_ID); return }
         // 화면이 보이면 재생 화면에 같은 버튼이 있다. Pleos는 알림을 화면 위에 띄워 재생 막대를 가리므로 화면이 보이는 동안엔 띄우지 않는다.
         // 화면이 가려지면(MainActivity.onStop) 다시 부른다.
+        // 앱이 보이면 메인의 「지금 듣는 중」 줄(또는 재생 화면)에 같은 버튼이 있다
         if (Engine.uiVisible) { nm.cancel(MESSAGE_ID); return }
-        nm.notify(MESSAGE_ID, builder(CH_MESSAGE)
+        // 소리로만 들려줄 때는 화면 위로 띄우지 않고 알림 목록에만 둔다
+        nm.notify(MESSAGE_ID, builder(if (Engine.quietPlay) CH_QUIET else CH_MESSAGE)
             .setContentTitle("${m.authorName}님이 ${m.occasion} 남긴 메시지")
             .setContentText(if (m.kind == "text") "$state · “${m.text}”" else state)
             .setStyle(Notification.BigTextStyle().bigText(if (m.kind == "text") "$state\n“${m.text}”" else state))

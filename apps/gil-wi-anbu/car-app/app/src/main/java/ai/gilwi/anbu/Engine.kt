@@ -83,6 +83,30 @@ object Engine : CarSignals.Listener {
         private set
     private var seatOccupied = false
     private var otherBelt = false
+    // 열리는 조건의 규약 (ConditionRules): 신호가 잠깐 튄 것으로 안부가 열리지 않게
+    private var frontBelt = false
+    private var rearBelt = false
+    /** 「옆자리에 누가 탄 날」을 여는 동승: 착석+벨트가 이어질 때. passengerNow(사생활 보호)보다 엄격하다 */
+    var togetherNow = false
+        private set
+    private var wiperOn = false
+    private var lowBeamOn = false
+    /** 시연에서 켠 밤길은 해 지는 시각과 상관없이 전조등을 끌 때까지 둔다 */
+    private var nightForced = false
+    /** P로 바꾼 때 (오래 운전: 짧게 쉰 것은 이어서 센다) */
+    private var parkedAt = 0L
+    /** 차가 켜진 뒤 이때까지 메시지가 들어올 때마다 「차에 탈 때」·「시동 걸 때」를 연다 (모임마다 늦게 받아도 놓치지 않게) */
+    private var bootOpenUntil = 0L
+    /** 「오래 운전할 때」를 세기 시작한 때 */
+    private var longStartAt = 0L
+    /** 이번 주행에 GPS로 달린 거리 */
+    private var tripMeters = 0.0
+    private var lastWarnCount = 0
+    private var prevRegionCodes: Set<String> = emptySet()
+    private val rainCheck = Runnable { if (wiperOn) setRain(true) }
+    private val nightCheck = Runnable { evalNight() }
+    private val togetherCheck = Runnable { if (togetherCandidate()) setTogether(true) }
+    private var parkCheck: Runnable? = null
     var feedHeard: List<Api.Heard> = emptyList()
         private set
     var feedDiaries: List<Api.Diary> = emptyList()
@@ -206,8 +230,29 @@ object Engine : CarSignals.Listener {
         Api.key = r.key
         circles[r.circle.id] = r.circle
         needPairing = false
+        r.circle.members.firstOrNull { it.id == r.memberId }?.name?.let { followDriver(r.circle.id, it) }
         refreshFromServer()
         done(null)
+    }
+
+    /**
+     * 누가 자기 코드로 이 차에 들어왔다: 차 한 대 = 한 사람이므로 다른 모임도 그 사람 차로 맞춘다.
+     * 다른 모임에 같은 이름의 사람이 있으면 그 사람을 주인으로, 없으면 그 모임은 쉰다(안부를 열지도 보여 주지도 않음).
+     * 원래 주인이 자기 코드로 돌아오면 같은 규칙으로 다시 켜진다.
+     */
+    private fun followDriver(joinedCircleId: String, name: String) {
+        val paused = store.pausedCircles.toMutableSet().apply { remove(joinedCircleId) }
+        store.memberships.filter { it.circleId != joinedCircleId }.forEach { ms ->
+            val c = circles[ms.circleId] ?: return@forEach
+            val same = c.members.firstOrNull { it.name == name }
+            if (same == null) { paused += ms.circleId; return@forEach }
+            paused -= ms.circleId
+            if (ms.ownerId != same.id) Api.setOwner(same.id, ms.key) { car -> if (car != null) store.syncMembership(ms.key, same.id, car) }
+        }
+        if (paused != store.pausedCircles) Log.d("차 주인이 $name(으)로: 쉬는 모임 ${paused.mapNotNull { circles[it]?.name }}")
+        store.pausedCircles = paused
+        pending.removeAll { it.circleId in paused }; skipped.removeAll { it.circleId in paused }
+        if (playing?.circleId in paused) { player.stop(); playing = null; Notifier.clearPlaying(); ui?.onPlaybackEnd() }
     }
 
     /** 관리하는 모임 바꾸기 (설정의 「모임 바꾸기」). 지도·재생은 그대로 모든 모임을 쓴다. */
@@ -238,9 +283,9 @@ object Engine : CarSignals.Listener {
         changed()
     }
 
-    // 앱만 버전: 처음 켜면 시연 가족에 「민수의 차」로 바로 들어간다 ---------------------
+    // 앱만 버전: 처음 켜면 시연 가족에 「원우의 차」로 바로 들어간다 ---------------------
 
-    /** 우리집(민수) → 대학 동기(민수) 순서로 들어가고, 관리하는 모임은 우리집 */
+    /** 우리집(원우) → 대학 동기(원우) → 우리 둘(원우) 순서로 들어가고, 관리하는 모임은 우리집 */
     fun joinDemo(done: () -> Unit = {}) {
         if (!BuildConfig.STANDALONE) return
         Log.d("시연 가족으로 시작")
@@ -248,12 +293,20 @@ object Engine : CarSignals.Listener {
             if (e1 != null) { Log.d("시연 가족 실패: $e1"); done(); return@joinCircle }
             setOwner(DEMO_OWNER) {
                 joinCircle(DEMO_FRIENDS) { e2 ->
-                    if (e2 == null) Api.setOwner(DEMO_FRIEND_OWNER) { name -> store.syncMembership(Api.key!!, DEMO_FRIEND_OWNER, name) }
-                    main.postDelayed({
-                        store.memberships.firstOrNull { it.circleId == "home" }?.let { switchCircle(it.circleId) }
-                        refreshFromServer()
-                        done()
-                    }, 800)
+                    // 열쇠는 그 모임에 들어간 직후의 것으로 붙잡아 둔다 (다음 모임에 들어가면 Api.key가 바뀐다)
+                    val k2 = Api.key
+                    if (e2 == null && k2 != null) Api.setOwner(DEMO_FRIEND_OWNER, k2) { name -> store.syncMembership(k2, DEMO_FRIEND_OWNER, name) }
+                    joinCircle(DEMO_COUPLE) { e3 ->
+                        val k3 = Api.key
+                        if (e3 == null && k3 != null) Api.setOwner(DEMO_COUPLE_OWNER, k3) { name -> store.syncMembership(k3, DEMO_COUPLE_OWNER, name) }
+                        // 시연 이야기: 운전 중 「녹음해 줘」로 남긴 말은 받는 사람이 다음에 시동을 걸 때 들린다
+                        store.voiceWhen = "start"
+                        main.postDelayed({
+                            store.memberships.firstOrNull { it.circleId == "home" }?.let { switchCircle(it.circleId) }
+                            refreshFromServer()
+                            done()
+                        }, 800)
+                    }
                 }
             }
         }
@@ -372,13 +425,25 @@ object Engine : CarSignals.Listener {
                 }
                 lastLoc?.let { matchNearby(it.first, it.second) }
                 matchCarState()
+                tryBootOpen()
             }
             changed()
         }
     }
 
+    /** 차가 켜진 뒤 모든 모임의 메시지를 받았으면 「차에 탈 때」·「시동 걸 때」를 연다 (받기 전에 열면 놓친다) */
+    private fun tryBootOpen() {
+        // 앱만 버전(시연)은 앱을 켠 것을 시동으로 치지 않는다: 「시동을 걸면」·「차에 타면」 시연 카드가 그 순간을 만든다
+        if (BuildConfig.STANDALONE) return
+        if (System.currentTimeMillis() > bootOpenUntil) return
+        if (messages.isEmpty()) return
+        Log.d("차 켜짐: 탈 때·시동 안부 열기 (받은 모임 ${loadedKeys.size}곳)")
+        // 같은 안부는 하루 한 번(markDelivered)이라 여러 번 불러도 한 번만 열린다
+        deliver(messages.filter { it.opensOn == "door" || it.opensOn == "start" })
+    }
+
     private fun rebuildMessages() {
-        messages = store.memberships.flatMap { messagesByKey[it.key].orEmpty() }
+        messages = store.liveMemberships.flatMap { messagesByKey[it.key].orEmpty() }
     }
 
     /** 「들었어요」 기록은 모든 모임 것을 모은다 (지도의 찾은 수). 일기는 지금 관리하는 모임 것만 (소식 화면). */
@@ -446,13 +511,13 @@ object Engine : CarSignals.Listener {
 
     /**
      * 「이 차는 누구 차인가요?」는 묻지 않는다 (팀 결정, 시나리오는 한 사람의 차로 흘러간다).
-     * 주인이 없는 모임(가족 공용 코드로 들어온 경우 등)은 기본 사람으로 저절로 정한다: 시연 가족이면 민수, 아니면 모임의 첫 사람.
+     * 주인이 없는 모임(가족 공용 코드로 들어온 경우 등)은 기본 사람으로 저절로 정한다: 시연 가족이면 원우, 아니면 모임의 첫 사람.
      * 바꾸려면 폰 웹이나 그 사람의 「내 코드」로 다시 들어오면 된다.
      */
     private fun ensureOwners() {
         store.memberships.filter { it.ownerId == null && it.key !in ownerPending }.forEach { ms ->
             val c = circles[ms.circleId] ?: return@forEach
-            val pick = c.members.firstOrNull { it.id == DEMO_OWNER || it.id == DEMO_FRIEND_OWNER } ?: c.members.firstOrNull() ?: return@forEach
+            val pick = c.members.firstOrNull { it.id in setOf(DEMO_OWNER, DEMO_FRIEND_OWNER, DEMO_COUPLE_OWNER) } ?: c.members.firstOrNull() ?: return@forEach
             ownerPending += ms.key
             Api.setOwner(pick.id, ms.key) { name ->
                 ownerPending -= ms.key
@@ -499,10 +564,10 @@ object Engine : CarSignals.Listener {
     fun demoSignal(kind: String, on: Boolean = true): Int = demoCount {
         demoBypass {
             when (kind) {
-                "door" -> onDriverDoorOpened()
+                "door" -> deliver(messages.filter { it.opensOn == "door" })
                 "rain" -> onWiper(on)
                 "night" -> onLowBeam(on)
-                "together" -> { otherBelt = false; onPassenger(on) }
+                "together" -> { otherBelt = false; frontBelt = on; onPassenger(on) }
                 "warning" -> onWarning(1)
                 "long" -> deliver(messages.filter { it.opensOn == "long" })
             }
@@ -527,13 +592,24 @@ object Engine : CarSignals.Listener {
         this.gear = gear
         Log.d("기어 $prev → $gear driver=${store.driverId}")
         // 이 차는 시동 신호(IGNITION_STATE)가 없어서, 켜진 뒤 처음 받은 기어를 「시동 걸 때」로 본다
-        if (prev == null) main.postDelayed({ deliver(messages.filter { it.opensOn == "start" }) }, 2000)
+        // 규약: 처음 받은 기어가 P일 때만 (달리는 중에 앱만 다시 켜진 것은 빼고), 마지막 시동 안부에서 30분이 지났을 때
+        // 「차에 탈 때」도 같은 때 연다: 시동이 꺼진 차에서는 앱이 없어 타면서 연 문을 볼 수 없다
+        if (prev == null && gear == CarSignals.Gear.P && System.currentTimeMillis() - store.lastStartAt > ConditionRules.START_GAP_MS) {
+            store.lastStartAt = System.currentTimeMillis()
+            bootOpenUntil = System.currentTimeMillis() + ConditionRules.BOOT_WINDOW_MS
+            main.postDelayed({ tryBootOpen() }, 2000)
+        }
         if (gear == CarSignals.Gear.D) {
-            if (!droveSinceLastPark) driveStartedAt = System.currentTimeMillis()
+            val now = System.currentTimeMillis()
+            if (!droveSinceLastPark) { driveStartedAt = now; tripMeters = 0.0 }
+            // 오래 운전: 10분 넘게 쉬었으면 새로 센다
+            if (longStartAt == 0L || (parkedAt > 0 && now - parkedAt >= ConditionRules.REST_RESET_MS)) longStartAt = now
+            parkCheck?.let { main.removeCallbacks(it) }; parkCheck = null
             droveSinceLastPark = true
             recordDriveConditions()
         }
         if (gear == CarSignals.Gear.P) {
+            parkedAt = System.currentTimeMillis()
             if (prev != null && droveSinceLastPark) {
                 store.onParkedAfterDriving()
                 uploadDiary()
@@ -541,7 +617,14 @@ object Engine : CarSignals.Listener {
                 val n = store.spots.count { it.at >= driveStartedAt }
                 if (n > 0 && pending.isEmpty()) main.postDelayed({ say("달리면서 저장한 곳이 ${n}곳 있어요. 화면에서 안부로 남길 수 있어요.") }, 1500)
                 // 「도착해 차를 세울 때」: 장소가 없으면 어디서든, 있으면 그 근처에서 세웠을 때 (시동 끔 신호가 없어 P로 본다)
-                deliver(messages.filter { m -> m.opensOn == "park" && (!m.hasPlace || lastLoc?.let { MainActivity.distanceM(it.first, it.second, m.lat, m.lon) <= m.radiusM } == true) })
+                // 규약: 이번 주행이 2분 이상이거나 300m 이상이고, P를 20초 넘게 유지할 때 (신호대기 중 잠깐 P는 빼고)
+                val longEnough = parkedAt - driveStartedAt >= ConditionRules.PARK_MIN_DRIVE_MS || tripMeters >= ConditionRules.PARK_MIN_DRIVE_M
+                val openPark = { deliver(messages.filter { m -> m.opensOn == "park" && (!m.hasPlace || lastLoc?.let { MainActivity.distanceM(it.first, it.second, m.lat, m.lon) <= m.radiusM } == true) }) }
+                if (demoNow) openPark()
+                else if (longEnough) {
+                    parkCheck?.let { main.removeCallbacks(it) }
+                    parkCheck = Runnable { parkCheck = null; if (this.gear == CarSignals.Gear.P) openPark() }.also { main.postDelayed(it, ConditionRules.PARK_HOLD_MS) }
+                } else Log.d("도착 안부: 이번 주행이 짧아 열지 않음")
             }
             // 달리면서 듣던 것은 세워도 그대로, 화면만 재생 화면으로
             if (playing != null) ui?.onPlayback()
@@ -578,8 +661,9 @@ object Engine : CarSignals.Listener {
     /** 「오래 운전할 때」: 세우지 않고 달린 시간을 1분마다 본다 */
     private val longDriveTick = object : Runnable {
         override fun run() {
-            if (gear == CarSignals.Gear.D && droveSinceLastPark && driveStartedAt > 0) {
-                val min = (System.currentTimeMillis() - driveStartedAt) / 60000
+            if (lowBeamOn) evalNight() // 해 지는 시각을 넘겼는지
+            if (gear == CarSignals.Gear.D && droveSinceLastPark && longStartAt > 0) {
+                val min = (System.currentTimeMillis() - longStartAt) / 60000
                 deliver(messages.filter { it.opensOn == "long" && min >= it.longMin })
             }
             main.postDelayed(this, 60_000)
@@ -587,7 +671,7 @@ object Engine : CarSignals.Listener {
     }
 
     /** 시연용: 이번 주행을 N분 전에 시작한 것으로 */
-    fun demoDriveMinutes(min: Int) { driveStartedAt = System.currentTimeMillis() - min * 60_000L; droveSinceLastPark = true; longDriveTick.run() }
+    fun demoDriveMinutes(min: Int) { driveStartedAt = System.currentTimeMillis() - min * 60_000L; longStartAt = driveStartedAt; droveSinceLastPark = true; longDriveTick.run() }
 
     override fun onLocation(lat: Double, lon: Double) {
         val prev = lastLoc
@@ -595,7 +679,7 @@ object Engine : CarSignals.Listener {
         if (prev == null || MainActivity.distanceM(prev.first, prev.second, lat, lon) > 1) Log.d("위치 $lat, $lon")
         if (prev != null && gear == CarSignals.Gear.D) {
             val d = MainActivity.distanceM(prev.first, prev.second, lat, lon)
-            if (d < 2000) store.addGpsDistance(d) // 시연용 순간이동은 거리에서 뺀다
+            if (d < 2000) { store.addGpsDistance(d); tripMeters += d } // 시연용 순간이동은 거리에서 뺀다
         }
         matchNearby(lat, lon)
         changed()
@@ -606,19 +690,44 @@ object Engine : CarSignals.Listener {
         ui?.changed()
     }
 
+    /** 규약: 와이퍼가 15초 넘게 계속 돌아야 비 (워셔액 뿌릴 때 잠깐 도는 것은 빼고). 멈추면 바로 끝. */
     override fun onWiper(on: Boolean) {
-        if (on == rainNow) return
-        rainNow = on
         Log.d("와이퍼 $on")
+        wiperOn = on
+        main.removeCallbacks(rainCheck)
+        when {
+            !on -> setRain(false)
+            demoNow -> setRain(true)
+            else -> main.postDelayed(rainCheck, ConditionRules.RAIN_HOLD_MS)
+        }
+    }
+
+    private fun setRain(v: Boolean) {
+        if (v == rainNow) return
+        rainNow = v
+        Log.d("비 $v")
         recordDriveConditions()
         matchCarState()
         changed()
     }
 
+    /** 규약: 전조등이 10초 넘게 켜져 있고 차 시계로 해가 진 뒤여야 밤길 (낮의 터널·궂은 날은 빼고) */
     override fun onLowBeam(on: Boolean) {
-        if (on == nightNow) return
-        nightNow = on
         Log.d("하향등 $on")
+        lowBeamOn = on
+        main.removeCallbacks(nightCheck)
+        when {
+            !on -> { nightForced = false; evalNight() }
+            demoNow -> { nightForced = true; evalNight() }
+            else -> main.postDelayed(nightCheck, ConditionRules.NIGHT_HOLD_MS)
+        }
+    }
+
+    private fun evalNight() {
+        val v = lowBeamOn && (nightForced || ConditionRules.isDark(lastLoc?.first, lastLoc?.second))
+        if (v == nightNow) return
+        nightNow = v
+        Log.d("밤길 $v")
         recordDriveConditions()
         matchCarState()
         changed()
@@ -634,13 +743,39 @@ object Engine : CarSignals.Listener {
         updatePassenger("다른 좌석 안전벨트 $buckled")
     }
 
+    override fun onBelts(front: Boolean, rear: Boolean) {
+        frontBelt = front; rearBelt = rear
+        updatePassenger("조수석 벨트 $front · 뒷좌석 벨트 $rear")
+    }
+
+    /** 규약: 조수석 착석+조수석 벨트, 또는 뒷좌석 벨트 (가방만 올린 것은 빼고) */
+    private fun togetherCandidate() = (seatOccupied && frontBelt) || rearBelt
+
+    private fun setTogether(v: Boolean) {
+        if (v == togetherNow) return
+        togetherNow = v
+        Log.d("옆자리 동승(열기) $v")
+        recordDriveConditions()
+        matchCarState()
+        changed()
+    }
+
     /** 경고등이 켜지면 「경고등이 켜질 때」 메시지 */
     override fun onWarning(count: Int) {
         Log.d("경고등 $count")
-        if (count > 0) deliver(messages.filter { it.opensOn == "warning" })
+        // 규약: 고장·주의 경고등이 새로 켜질 때만 (CarSignals가 표시등은 빼고 센다)
+        val rising = count > lastWarnCount
+        lastWarnCount = count
+        if (count > 0 && (rising || demoNow)) deliver(messages.filter { it.opensOn == "warning" })
     }
 
     private fun updatePassenger(why: String) {
+        // 「옆자리에 누가 탄 날」을 여는 쪽은 30초 넘게 이어질 때만
+        main.removeCallbacks(togetherCheck)
+        if (!togetherCandidate()) setTogether(false)
+        else if (demoNow) setTogether(true)
+        else if (!togetherNow) main.postDelayed(togetherCheck, ConditionRules.TOGETHER_HOLD_MS)
+        // 사생활 보호(보낸 사람 가리기·먼저 묻기)는 하나만 감지돼도 바로
         val occupied = seatOccupied || otherBelt
         Log.d(why)
         if (occupied == passengerNow) return
@@ -657,10 +792,12 @@ object Engine : CarSignals.Listener {
     }
 
     /** 운전석 문을 열면 "차에 탈 때" 메시지를 연다. 정차 중이라 바로 들려준다. */
+    /**
+     * 운전석 문 신호는 「차에 탈 때」에 쓰지 않는다: 시동이 꺼진 차에서는 앱이 없어 타면서 연 문을 볼 수 없고,
+     * 켜진 뒤 연 문은 대개 내릴 때다. 「차에 탈 때」는 차가 켜져 앱이 처음 뜰 때 연다 (tryBootOpen).
+     */
     override fun onDriverDoorOpened() {
         Log.d("운전석 문 열림")
-        deliver(messages.filter { it.opensOn == "door" })
-        changed()
     }
 
     /** 일기용: D로 달리는 동안 비·밤길·동승이었는지 */
@@ -668,7 +805,7 @@ object Engine : CarSignals.Listener {
         if (gear != CarSignals.Gear.D) return
         if (rainNow) store.markCondition("rain")
         if (nightNow) store.markCondition("night")
-        if (passengerNow) store.markCondition("together")
+        // 동승은 기록하지 않는다 (옆자리 사람 보호)
     }
 
     /** 차 안에서만 하는 근처 계산. */
@@ -679,7 +816,10 @@ object Engine : CarSignals.Listener {
         if (regionMsgs.isNotEmpty()) {
             val d = Regions.districtOf(lat, lon)
             val codes = listOfNotNull(d?.code, d?.code?.take(2), Regions.provinceOf(lat, lon)?.code).toSet()
-            deliver(regionMsgs.filter { it.regionCode in codes })
+            // 규약: 같은 지역이 위치 신호 두 번 연속일 때 (경계에서 한 번 튄 것은 빼고)
+            val steady = demoNow || codes == prevRegionCodes
+            prevRegionCodes = codes
+            if (steady) deliver(regionMsgs.filter { it.regionCode in codes })
         }
     }
 
@@ -689,7 +829,8 @@ object Engine : CarSignals.Listener {
             when (it.opensOn) {
                 "rain" -> rainNow
                 "night" -> nightNow
-                "together" -> passengerNow
+                // 새로 남길 수는 없지만 예전에 남긴 것은 연다. 틀기 전에 옆자리 배려로 먼저 묻는다
+                "together" -> togetherNow
                 else -> false
             }
         })
@@ -702,7 +843,8 @@ object Engine : CarSignals.Listener {
             val driver = ownerOf(m)
             if (m.authorId == driver) continue
             if (m.to.isNotEmpty() && driver !in m.to) continue // 다른 사람에게 보낸 것
-            if (!demoNow && !timeOk(m)) continue
+            // 시연은 시간대·요일은 건너뛰지만 시작·끝 날짜는 지킨다 (「1년 뒤부터」 남긴 안부가 바로 열리면 안 된다)
+            if (!(if (demoNow) dateOk(m) else timeOk(m))) continue
             if (!repeatOk(m, driver)) continue
             if (m.kind == "text" && !store.acceptTts) continue
             if (m in pending || m.id == playing?.id) continue
@@ -719,7 +861,15 @@ object Engine : CarSignals.Listener {
     }
 
     /** 시간대·요일·날짜 조건 (차 시계로) */
+    private fun dateOk(m: PlaceMessage): Boolean {
+        val today = java.time.LocalDate.now().toString()
+        return (m.notBefore == null || today >= m.notBefore) && (m.notAfter == null || today <= m.notAfter)
+    }
+
     private fun timeOk(m: PlaceMessage): Boolean {
+        // 규약: 차 시계가 아직 맞춰지지 않았으면 시간대·요일·날짜가 있는 안부는 미룬다
+        val hasTime = m.notBefore != null || m.notAfter != null || m.days.isNotEmpty() || (m.hourFrom != null && m.hourTo != null)
+        if (hasTime && !ConditionRules.clockOk()) return false
         val now = java.time.LocalDateTime.now()
         if (m.notBefore != null && now.toLocalDate().toString() < m.notBefore) return false
         if (m.notAfter != null && now.toLocalDate().toString() > m.notAfter) return false
@@ -755,23 +905,25 @@ object Engine : CarSignals.Listener {
         if (parked == true && store.driverId == null) return
         if (parked == true && uiVisible && uiBusy) return
         // 달리는 중: 화면 없이 소리로만 (동승자가 있으면 canPlayNow가 막는다)
-        if (parked != true) { Log.d("운전 중 재생"); startPlayback(announce = true); return }
+        if (parked != true) { Log.d("운전 중 재생"); startPlayback(announce = true, auto = true); return }
         if (needsPassengerOk()) {
             if (passengerLater || askingPassenger) return
             // 옆자리에 누가 있으면 바로 틀지 않고 묻는다. 누가 보냈는지는 말하지 않는다.
             askingPassenger = true
             Log.d("동승 중: 들을지 묻기")
-            if (!uiVisible) Notifier.bringToFront()
+            if (!uiVisible && store.popUpScreen) Notifier.bringToFront()
             changed()
-            player.speak("메시지가 도착했어요. 지금 들으시려면 화면의 「지금 듣기」를 눌러 주세요") {}
+            player.speak(if (store.popUpScreen || uiVisible) "메시지가 도착했어요. 지금 들으시려면 화면의 「지금 듣기」를 눌러 주세요"
+                else "메시지가 도착했어요. 들으시려면 다온을 열어 「지금 듣기」를 눌러 주세요") {}
             return
         }
-        if (!uiVisible) Notifier.bringToFront()
-        startPlayback(announce = true)
+        // 기본은 화면을 띄우지 않는다: 보던 화면(내비 등)은 그대로 두고 소리로만. 보고 싶으면 메인의 「화면 보기」
+        if (!uiVisible && store.popUpScreen) Notifier.bringToFront()
+        startPlayback(announce = true, auto = true)
     }
 
-    /** 「옆자리에 누가 탄 날」 메시지는 함께 들으라고 남긴 것이라 묻지 않는다 */
-    private fun needsPassengerOk() = passengerNow && store.askWithPassenger && !passengerOk && pending.any { it.opensOn != "together" }
+    /** 옆자리에 누가 있으면 어떤 안부든 틀기 전에 묻는다 (예전 「옆자리에 누가 탄 날」 안부도 예외 없이) */
+    private fun needsPassengerOk() = passengerNow && store.askWithPassenger && !passengerOk && pending.isNotEmpty()
 
     /** 동승 중 묻기에 「다음에 들을게요」 */
     fun passengerLater() {
@@ -782,11 +934,20 @@ object Engine : CarSignals.Listener {
     }
 
     /** 오늘 들은 메시지를 다시 모아 듣는다. 아직 안 들은 것이 있으면 그것부터. */
-    fun playToday() {
+    /** 기다리는 안부 지금 듣기. 모임을 골라 두었으면 그 모임 것부터 */
+    fun playNow(circleId: String? = null) {
+        if (circleId != null) { val (mine, rest) = pending.partition { it.circleId == circleId }; pending.clear(); pending.addAll(mine + rest) }
+        startPlayback(announce = false)
+    }
+
+    fun playToday(circleId: String? = null) {
         val ids = store.heard.map { it.messageId }
         val again = ids.mapNotNull { id -> messages.firstOrNull { it.id == id } }.filter { it !in pending && it.id != playing?.id }
+            .filter { circleId == null || it.circleId == circleId }
         replayIds += again.map { it.id }
         pending.addAll(again)
+        // 모임을 골라 두었으면 그 모임 안부부터 (다른 모임 것은 지우지 않고 뒤로)
+        if (circleId != null) { val (mine, rest) = pending.partition { it.circleId == circleId }; pending.clear(); pending.addAll(mine + rest) }
         startPlayback(announce = false)
     }
 
@@ -834,7 +995,7 @@ object Engine : CarSignals.Listener {
         // 시연으로 옮겨 둔 자리면 내비 주소는 다른 곳이라 쓰지 않는다 (화면에서 시·군·구 이름으로)
         val place = if (car.demoLocation != null) "" else car.address.orEmpty()
         val now = System.currentTimeMillis()
-        val cond = listOfNotNull("rain".takeIf { rainNow }, "night".takeIf { nightNow }, "together".takeIf { passengerNow }).joinToString(",")
+        val cond = listOfNotNull("rain".takeIf { rainNow }, "night".takeIf { nightNow }).joinToString(",") // 동승은 남기지 않는다
         val last = store.spots.lastOrNull()
         if (last != null && now - last.at < SPOT_MERGE_MS && MainActivity.distanceM(last.lat, last.lon, lat, lon) < 200) {
             store.updateSpot(last.copy(memo = memo.ifBlank { last.memo }, circleId = if (groupQuery.isNotBlank()) group.id else last.circleId.ifEmpty { group.id }))
@@ -885,13 +1046,30 @@ object Engine : CarSignals.Listener {
             ?: joined.firstOrNull { it.name.contains(q) || q.contains(it.name) }
     }
 
+    /** 이 차가 들어간 모임 이름들 (「녹음해 줘」에서 이 중 하나를 정확히 말해야 그 모임에 남는다) */
+    fun groupNames(): List<String> = store.liveMemberships.mapNotNull { circles[it.circleId]?.name }
+
+    /**
+     * 모임 이름을 정확히 말했을 때만 그 모임: 「우리집」「대학 동기」(띄어쓰기·「우리집에」「우리집으로」 같은 조사는 봐준다).
+     * 「가족」「친구」처럼 종류로만 말하면 찾지 않는다 — 운전 중 녹음은 엉뚱한 모임에 남지 않게 정확히 고른다.
+     */
+    fun findGroupExact(query: String): Circle? {
+        fun squash(s: String) = s.replace(Regex("\\s+"), "")
+        val raw = squash(query)
+        if (raw.isEmpty()) return null
+        val stripped = listOf("에게", "한테", "으로", "로", "에", "의", "께").fold(raw) { acc, p -> if (acc.length > p.length && acc.endsWith(p)) acc.removeSuffix(p) else acc }
+        val joined = store.liveMemberships.mapNotNull { circles[it.circleId] }
+        return joined.firstOrNull { squash(it.name) == raw } ?: joined.firstOrNull { squash(it.name) == stripped }
+    }
+
     /** recipients: 실제로 받는 사람 이름 (비면 모임 모두), place: 장소 조건이면 장소 이름, detail: 실패 이유(못 찾은 이름·서버 오류) */
     class LeaveOutcome(val result: LeaveResult, val recipients: List<String> = emptyList(), val whenKey: String = "",
                        val place: String = "", val detail: String = "", val text: String = "", val group: String = "")
 
     /** 열리는 조건의 한국어 이름 (MainActivity.WHEN_OPTIONS, 서버와 같은 키) */
     val LEAVE_WHEN = linkedMapOf(
-        "place" to "이 장소를 지나면", "rain" to "비 오는 날", "night" to "밤길", "together" to "옆자리에 누가 탄 날", "door" to "차에 탈 때",
+        // 「옆자리에 누가 탄 날」(together)은 뺐다: 동승자 앞에서 트는 조건이라 옆자리 배려와 어긋난다
+        "place" to "이 장소를 지나면", "rain" to "비 오는 날", "night" to "밤길", "door" to "차에 탈 때",
         "start" to "시동 걸 때", "park" to "도착해 차를 세울 때", "long" to "오래 운전할 때", "region" to "그 지역에 들어가면", "warning" to "경고등이 켜질 때",
     )
     private val LEAVE_WITH_PLACE = setOf("place", "park", "region")
@@ -910,12 +1088,18 @@ object Engine : CarSignals.Listener {
      * 메시지를 남긴다. whenKey가 비면 「이 장소를 지나면」(지금 위치). useSpot이면 방금 저장한 곳을 장소로 쓰고 보낸 뒤 지운다.
      * done은 메인 스레드에서 한 번 불린다.
      */
-    fun leaveMessage(text: String, toQueries: List<String>, whenKey: String, useSpot: Boolean, groupQuery: String = "", done: (LeaveOutcome) -> Unit) {
-        val body = text.trim().take(LEAVE_TEXT_MAX)
-        if (body.isEmpty()) return done(LeaveOutcome(LeaveResult.EMPTY_TEXT))
-        val w = whenKey.trim().ifEmpty { "place" }
+    fun leaveMessage(text: String, toQueries: List<String>, whenKey: String, useSpot: Boolean, groupQuery: String = "",
+                     audioBase64: String? = null, done: (LeaveOutcome) -> Unit) {
+        // audioBase64가 있으면 목소리 그대로 남긴다 (운전 중 「녹음해 줘」)
+        val body = if (audioBase64 != null) "" else text.trim().take(LEAVE_TEXT_MAX)
+        if (audioBase64 == null && body.isEmpty()) return done(LeaveOutcome(LeaveResult.EMPTY_TEXT))
+        // 말로 남길 때는 조건을 말하지 않는다: 메시지 화면에서 정해 둔 조건을 쓴다
+        val w = whenKey.trim().ifEmpty { store.voiceWhen.takeIf { it in LEAVE_WHEN } ?: "place" }
         if (w !in LEAVE_WHEN) return done(LeaveOutcome(LeaveResult.BAD_WHEN, detail = w))
         if (needPairing) return done(LeaveOutcome(LeaveResult.NOT_READY))
+        // Gleo가 운전자가 말하지 않았는데도 「저장한 곳에」(useSavedSpot)를 켜서 보낼 때가 있다 (11/10 로그).
+        // 저장한 곳이 없으면 실패하지 않고 지금 자리에 남긴다.
+        val useSpot = useSpot && store.spots.isNotEmpty()
         // 받는 쪽은 그룹(모임) 단위: 「가족에게」면 가족 모임 모두, 「친구에게」면 친구 모임 모두
         // 저장한 곳에 남기면서 그룹을 말하지 않았으면, 저장할 때 고른 그룹으로 간다
         val spotGroup = if (useSpot && groupQuery.isBlank()) store.spots.lastOrNull()?.circleId?.let { circles[it] } else null
@@ -928,7 +1112,8 @@ object Engine : CarSignals.Listener {
             if (m !in to) to += m
         }
 
-        val json = JSONObject().put("authorId", author).put("when", w).put("kind", "text").put("text", body).put("repeat", "once")
+        val json = JSONObject().put("authorId", author).put("when", w).put("kind", if (audioBase64 != null) "voice" else "text").put("text", body).put("repeat", "once")
+        audioBase64?.let { json.put("audioBase64", it).put("audioExt", "m4a") }
         if (to.isNotEmpty()) json.put("to", JSONArray(to.map { it.id }))
 
         var placeName = ""
@@ -964,8 +1149,17 @@ object Engine : CarSignals.Listener {
 
     /** 화면 없이 짧게 말해 준다 (재생 중이면 끼어들지 않는다) */
     fun say(text: String) {
-        if (playing != null) return
+        if (playing != null || text.isBlank()) return
         player.speak(text) {}
+    }
+
+    /** 내가 남긴 안부 들어 보기 등 짧게 읽던 것을 멈춘다 (받은 안부 재생 중이면 건드리지 않는다) */
+    fun stopSpeaking() { if (playing == null) player.stop() }
+
+    /** 말하고, 다 말한 뒤(또는 못 했으면 바로) then. 「녹음해 줘」에서 안내 → 삐 → 녹음 순서를 지키려고 쓴다 */
+    fun speakThen(text: String, then: () -> Unit) {
+        if (playing != null) player.stop()
+        player.speak(text) { then() }
     }
 
     /** 다시 듣는 중인 안부인지 (「들었어요」를 또 보내지 않는다) */
@@ -986,8 +1180,24 @@ object Engine : CarSignals.Listener {
         replayIds.clear()
     }
 
-    fun startPlayback(announce: Boolean) {
+    /**
+     * 지금 재생이 화면 없이 소리로만인지: 저절로 시작됐고 「화면 띄우기」가 꺼져 있을 때.
+     * 사람이 직접 누른 재생(지금 듣기·모아 듣기)은 재생 화면을 연다.
+     */
+    var quietPlay = false
+        private set
+
+    /** 소리로만 듣던 것을 재생 화면으로 */
+    fun showPlayback() {
+        if (playing == null) return
+        quietPlay = false
+        ui?.onPlayback()
+        changed()
+    }
+
+    fun startPlayback(announce: Boolean, auto: Boolean = false) {
         if (pending.isEmpty() || !canPlayNow()) return
+        quietPlay = auto && !store.popUpScreen
         askingPassenger = false
         if (passengerNow) passengerOk = true // 직접 들으려고 했다
         val first = pending.removeAt(0)
@@ -1106,7 +1316,7 @@ object Engine : CarSignals.Listener {
         player.stop()
         playing?.let { if (skip && it.id !in replayIds) skipped += it }
         playing = null
-        if (pending.isNotEmpty() && canPlayNow()) startPlayback(announce = false) else endPlayback()
+        if (pending.isNotEmpty() && canPlayNow()) startPlayback(announce = false, auto = quietPlay) else endPlayback()
     }
 
     /** 지금 것과 남은 것 모두 나중에 */
@@ -1119,6 +1329,7 @@ object Engine : CarSignals.Listener {
     }
 
     private fun endPlayback() {
+        quietPlay = false
         pending.addAll(skipped); skipped.clear()
         dropReplays()
         Notifier.clearPlaying()
@@ -1136,6 +1347,8 @@ object Engine : CarSignals.Listener {
     private const val SPOT_MERGE_MS = 60_000L
     private const val DEMO_HOME = "demo-home"
     private const val DEMO_FRIENDS = "demo-friends"
-    private const val DEMO_OWNER = "minsu"
-    private const val DEMO_FRIEND_OWNER = "f_minsu"
+    private const val DEMO_COUPLE = "demo-couple"
+    private const val DEMO_OWNER = "wonwoo"
+    private const val DEMO_FRIEND_OWNER = "f_wonwoo"
+    private const val DEMO_COUPLE_OWNER = "c_wonwoo"
 }

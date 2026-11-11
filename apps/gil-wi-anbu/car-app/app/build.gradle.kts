@@ -15,7 +15,23 @@ android {
         buildConfigField("String", "SERVER_URL", "\"http://10.0.2.2:8090\"")
         // 앱만으로 동작하는 시연 버전 (브랜치 v002-standalone). 서버 없이 앱 안(LocalServer)에서 모든 기능이 돈다.
         buildConfigField("boolean", "STANDALONE", "true")
+        // 실차(Pleos Connect)는 arm64, 에뮬레이터는 x86_64. 나머지 CPU용 라이브러리(32비트 등)는 넣지 않는다
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
+    buildTypes {
+        // 시연은 debug APK로 설치하므로 debug에도 줄이기(R8)를 켠다. 이름 바꾸기는 하지 않아 로그·오류 위치가 그대로 보인다
+        getByName("debug") {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+        getByName("release") {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+    }
+    packaging { jniLibs { excludes += listOf("lib/mips/**", "lib/mips64/**", "lib/armeabi/**") } }
     buildFeatures { buildConfig = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }

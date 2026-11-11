@@ -49,6 +49,8 @@ class CarSignals(context: Context, private val listener: Listener) {
         fun onDriverDoorOpened()
         /** 운전석 말고 누가 안전벨트를 맸는지 (동승자 판단을 좌석 센서와 함께) */
         fun onOtherBelt(buckled: Boolean) {}
+        /** 조수석 벨트·뒷좌석 벨트를 따로 (「옆자리에 누가 탄 날」을 열 때 가방과 사람을 가른다) */
+        fun onBelts(front: Boolean, rear: Boolean) {}
         /** 경고등이 켜졌는지 (켜진 것 개수) */
         fun onWarning(count: Int) {}
     }
@@ -135,6 +137,7 @@ class CarSignals(context: Context, private val listener: Listener) {
     private val otherSeats = listOf(SeatValue.ROW_1_RIGHT, SeatValue.ROW_2_LEFT, SeatValue.ROW_2_RIGHT).map { it to SeatArea(it) }
     private val beltState = HashMap<SeatValue, Boolean>()
     private var lastBelt: Boolean? = null
+    private var lastBelts: Pair<Boolean, Boolean>? = null
     private var lastWarning = -1
     private var safetyOk = true
 
@@ -147,13 +150,19 @@ class CarSignals(context: Context, private val listener: Listener) {
                             beltState[v] = b == true
                             val any = beltState.values.any { it }
                             if (any != lastBelt) { lastBelt = any; listener.onOtherBelt(any) }
+                            val front = beltState[SeatValue.ROW_1_RIGHT] == true
+                            val rear = beltState[SeatValue.ROW_2_LEFT] == true || beltState[SeatValue.ROW_2_RIGHT] == true
+                            if (front to rear != lastBelts) { lastBelts = front to rear; listener.onBelts(front, rear) }
                         }
                     }, { })
                 }
             }
             if (safetyOk) runCatching {
                 vehicle.getSafety().getTelltalesInfo({ t ->
-                    val n = runCatching { t.telltales.size }.getOrDefault(0)
+                    // 방향지시등·전조등 표시·주행 모드 같은 표시등은 빼고, 고장·주의 경고등이 켜지거나 깜빡이는 것만 센다 (ConditionRules)
+                    val n = runCatching {
+                        t.telltales.count { d -> d.type.name in ConditionRules.WARNING_TYPES && d.state.name != "OFF" }
+                    }.getOrDefault(0)
                     main.post { if (n != lastWarning) { lastWarning = n; listener.onWarning(n) } }
                 }, { e -> if (e is SecurityException) safetyOk = false })
             }
