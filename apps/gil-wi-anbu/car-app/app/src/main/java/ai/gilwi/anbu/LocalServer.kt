@@ -9,7 +9,7 @@ import java.security.SecureRandom
 
 /**
  * 앱만으로 동작하는 시연 버전(v002-standalone)의 「앱 안 서버」.
- * server/server.js가 하던 일(모임·프로필·메시지·들었어요·답장·일기)을 같은 주소와 같은 JSON으로 앱 안에서 처리한다.
+ * server/server.js가 하던 일(그룹·프로필·메시지·들었어요·답장·일기)을 같은 주소와 같은 JSON으로 앱 안에서 처리한다.
  * Api.call이 네트워크 대신 여기로 보낸다. 데이터는 이 차 안(filesDir/local_db.json)에만 있다.
  * 처음 켜면 assets/demo/seed.json(로드레터 시나리오 가족)으로 시작한다.
  */
@@ -44,7 +44,7 @@ object LocalServer {
         addPersonCodes()
     }
 
-    /** 예전 데이터(사람마다 코드가 없던 때): 차 주인(원우·예전 민수)의 코드를 예전 모임 코드로, 모임 코드는 폰용(-all)으로 */
+    /** 예전 데이터(사람마다 코드가 없던 때): 차 주인(원우·예전 민수)의 코드를 예전 그룹 코드로, 그룹 코드는 폰용(-all)으로 */
     private fun addPersonCodes() {
         var changed = false
         circles().forEach { c ->
@@ -59,7 +59,7 @@ object LocalServer {
         if (changed) save()
     }
 
-    /** 시연 데이터로 되돌리기 (모임·메시지·기기 열쇠 모두 처음 상태) */
+    /** 시연 데이터로 되돌리기 (그룹·메시지·기기 열쇠 모두 처음 상태) */
     @Synchronized
     fun reset() {
         copySeed()
@@ -101,8 +101,8 @@ object LocalServer {
         if (m == "POST" && r == listOf("join")) return join(b)
         if (r.firstOrNull() == "tts") return err(404, "not found")
         // 열쇠가 있어야
-        val device = deviceOf(key) ?: return err(401, "이 기기는 모임에 연결되어 있지 않아요")
-        val circle = circles().firstOrNull { it.getString("id") == device.getString("circleId") } ?: return err(401, "모임이 없어졌어요")
+        val device = deviceOf(key) ?: return err(401, "이 기기는 그룹에 연결되어 있지 않아요")
+        val circle = circles().firstOrNull { it.getString("id") == device.getString("circleId") } ?: return err(401, "그룹이 없어졌어요")
         when {
             m == "GET" && r == listOf("me") -> return ok(JSONObject().put("device", publicDevice(device)).put("circle", publicCircle(circle)))
             r.getOrNull(0) == "devices" && r.size == 3 -> return deviceRoute(r[2], r[1], b, device, circle)
@@ -153,7 +153,7 @@ object LocalServer {
                 save(); return ok(JSONObject().put("ok", true))
             }
             m == "POST" && r == listOf("delete") -> {
-                if (b.optString("confirm") != circle.getString("name")) return err(400, "확인을 위해 모임 이름을 그대로 써 주세요")
+                if (b.optString("confirm") != circle.getString("name")) return err(400, "확인을 위해 그룹 이름을 그대로 써 주세요")
                 val ids = messages().filter { it.getString("circleId") == cid }.map { it.getString("id") }.toSet()
                 messages().filter { it.getString("id") in ids }.forEach { removeMedia(it.optString("audioUrl")) }
                 setArr("messages", messages().filterNot { it.getString("id") in ids })
@@ -219,7 +219,7 @@ object LocalServer {
             "owner" -> {
                 val owner = b.optString("ownerId")
                 val mem = circle.getJSONArray("members").let { a -> (0 until a.length()).map { a.getJSONObject(it) } }.firstOrNull { it.getString("id") == owner }
-                    ?: return err(400, "모임 사람 중에서 골라 주세요")
+                    ?: return err(400, "그룹 사람 중에서 골라 주세요")
                 target.put("ownerId", owner)
                 if (target.optString("name") == "우리 차") target.put("name", "${mem.getString("name")}의 차")
             }
@@ -314,14 +314,14 @@ object LocalServer {
         return ok(publicMessage(msg), 201)
     }
 
-    // 모임 만들기·들어가기 ------------------------------------------------------
+    // 그룹 만들기·들어가기 ------------------------------------------------------
 
     private fun createCircle(b: JSONObject): Reply {
         val type = b.optString("type").takeIf { it in CIRCLE_TYPES } ?: "family"
         val name = clean(b.optString("memberName")); if (name.isEmpty()) return err(400, "내 이름을 써 주세요")
         if (!b.optBoolean("agreed")) return err(400, "개인정보 처리에 동의해야 만들 수 있어요")
         val member = JSONObject().put("id", newId("m")).put("code", newInviteCode()).put("name", name).put("title", clean(b.optString("title"))).put("color", color(b.optString("color")))
-        val circle = JSONObject().put("id", newId("c")).put("name", clean(b.optString("circleName")).ifEmpty { if (type == "family") "우리집" else "우리 모임" })
+        val circle = JSONObject().put("id", newId("c")).put("name", clean(b.optString("circleName")).ifEmpty { if (type == "family") "우리집" else "우리 그룹" })
             .put("type", type).put("members", JSONArray().put(member)).put("inviteCode", newInviteCode()).put("createdAt", now())
         db.getJSONArray("circles").put(circle)
         val (device, key) = addCar(b, circle, member.getString("id"))
@@ -329,7 +329,7 @@ object LocalServer {
         return ok(JSONObject().put("key", key).put("circle", publicCircle(circle)).put("memberId", member.getString("id")).put("device", publicDevice(device)), 201)
     }
 
-    /** 사람마다 받은 「내 코드」로 들어오면 그 사람 차. 모임 코드는 폰용이라 차는 못 들어온다 (server.js /api/join과 같다) */
+    /** 사람마다 받은 「내 코드」로 들어오면 그 사람 차. 그룹 코드는 폰용이라 차는 못 들어온다 (server.js /api/join과 같다) */
     private fun join(b: JSONObject): Reply {
         val norm = { s: String -> s.uppercase().replace(Regex("[\\s-]"), "") }
         val want = norm(b.optString("inviteCode"))
@@ -338,8 +338,8 @@ object LocalServer {
             owner = c.getJSONArray("members").let { a -> (0 until a.length()).map { a.getJSONObject(it) } }.firstOrNull { want.isNotEmpty() && norm(it.optString("code")) == want }
             owner != null
         } ?: circles().firstOrNull { want.isNotEmpty() && norm(it.optString("inviteCode")) == want }
-            ?: return err(404, "초대 코드가 맞지 않거나 바뀌었어요. 모임 사람에게 새 코드를 받아 주세요")
-        if (owner == null) return err(400, "차는 사람마다 받은 「내 코드」로 들어와요. 모임 사람에게 내 코드를 물어봐 주세요")
+            ?: return err(404, "초대 코드가 맞지 않거나 바뀌었어요. 그룹 사람에게 새 코드를 받아 주세요")
+        if (owner == null) return err(400, "차는 사람마다 받은 「내 코드」로 들어와요. 그룹 사람에게 내 코드를 물어봐 주세요")
         if (!b.optBoolean("agreed")) return err(400, "개인정보 처리에 동의해야 들어갈 수 있어요")
         val (device, key) = addCar(b, circle, owner!!.getString("id"))
         save()

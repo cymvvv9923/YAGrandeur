@@ -37,8 +37,8 @@ object VoiceNote {
     private const val MAX_MS = 20_000L
 
     /**
-     * group: 앞에 정확히 말한 모임 이름 (「우리집 녹음해 줘」). 비면 지금 관리하는 모임 (「녹음해 줘」).
-     * 모임 이름이 정확히 맞지 않으면 짐작해서 남기지 않고, 있는 모임 이름을 알려 준다.
+     * group: 앞에 정확히 말한 그룹 이름 (「우리집 녹음해 줘」). 비면 지금 관리하는 그룹 (「녹음해 줘」).
+     * 그룹 이름이 정확히 맞지 않으면 짐작해서 남기지 않고, 있는 그룹 이름을 알려 준다.
      * useSpot: 방금 저장한 곳에 남긴다.
      */
     fun start(context: Context, group: String, useSpot: Boolean) {
@@ -46,9 +46,9 @@ object VoiceNote {
         val c = if (group.isBlank()) Engine.circle else Engine.findGroupExact(group)
         if (c == null) {
             val names = Engine.groupNames().joinToString(", ")
-            Log.d("녹음해 줘: 모임 이름 안 맞음 「$group」 (있는 모임: $names)")
-            Engine.say(if (group.isBlank()) "아직 모임에 연결되지 않았어요."
-                else "「$group」이라는 모임이 없어요. $names 중에서 이름을 정확히 말해 주세요.")
+            Log.d("녹음해 줘: 그룹 이름 안 맞음 「$group」 (있는 그룹: $names)")
+            Engine.say(if (group.isBlank()) "아직 그룹에 연결되지 않았어요."
+                else "「$group」이라는 그룹이 없어요. $names 중에서 이름을 정확히 말해 주세요.")
             return
         }
         busy = true
@@ -114,7 +114,7 @@ object VoiceNote {
             Engine.LeaveResult.SENT -> if (voice) "「${o.group}」에 목소리로 남겼어요. $whenKo 들려줄게요."
                 else "「${o.group}」에 「${o.text}」라고 남겼어요."
             Engine.LeaveResult.NO_LOCATION -> "지금 위치를 몰라서 남기지 못했어요."
-            Engine.LeaveResult.NOT_READY -> "아직 모임에 연결되지 않아 남기지 못했어요."
+            Engine.LeaveResult.NOT_READY -> "아직 그룹에 연결되지 않아 남기지 못했어요."
             Engine.LeaveResult.NO_AUTHOR -> "보내는 사람이 정해지지 않아 남기지 못했어요."
             else -> "남기지 못했어요. ${o.detail}".trim()
         })

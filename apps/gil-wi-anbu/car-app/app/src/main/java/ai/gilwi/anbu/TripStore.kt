@@ -12,11 +12,11 @@ class TripStore(context: Context) {
     /** 이 차의 가족 연결(열쇠). 날짜가 바뀌어도 지우지 않으므로 오늘 기록과 다른 파일에 둔다. */
     private val device = context.getSharedPreferences("gilwi_device", Context.MODE_PRIVATE)
 
-    // 모임 연결 ------------------------------------------------------------
-    // 차 한 대가 가족·친구 등 여러 모임에 들어갈 수 있다. 모임마다 서버가 준 열쇠와 그 모임에서의 차 주인이 따로 있다.
-    // 화면의 모임 관리·남기기는 「지금 관리하는 모임」(active) 하나를 다루고, 지도·재생은 모든 모임을 함께 쓴다.
+    // 그룹 연결 ------------------------------------------------------------
+    // 차 한 대가 가족·친구 등 여러 그룹에 들어갈 수 있다. 그룹마다 서버가 준 열쇠와 그 그룹에서의 차 주인이 따로 있다.
+    // 화면의 그룹 관리·남기기는 「지금 관리하는 그룹」(active) 하나를 다루고, 지도·재생은 모든 그룹을 함께 쓴다.
 
-    /** 모임 하나와의 연결. circleId가 빈 것은 예전 형식에서 옮겨 와 아직 모임을 받지 못한 것 */
+    /** 그룹 하나와의 연결. circleId가 빈 것은 예전 형식에서 옮겨 와 아직 그룹을 받지 못한 것 */
     data class Membership(val key: String, val circleId: String, val ownerId: String?, val carName: String)
 
     val memberships: List<Membership>
@@ -34,7 +34,7 @@ class TripStore(context: Context) {
         device.edit().putString("memberships", arr.toString()).apply()
     }
 
-    /** 예전(모임 하나) 형식: key·ownerId·carName을 모임 목록으로 옮긴다 */
+    /** 예전(그룹 하나) 형식: key·ownerId·carName을 그룹 목록으로 옮긴다 */
     private fun migrate() {
         val old = device.getString("key", null) ?: return
         if (device.contains("memberships")) { device.edit().remove("key").apply(); return }
@@ -43,7 +43,7 @@ class TripStore(context: Context) {
         saveMemberships(listOf(m))
     }
 
-    /** 지금 관리하는 모임 */
+    /** 지금 관리하는 그룹 */
     var activeCircleId: String?
         get() = device.getString("activeCircle", null)
         set(v) = device.edit().putString("activeCircle", v).apply()
@@ -55,9 +55,9 @@ class TripStore(context: Context) {
         saveMemberships(memberships.map { if (it.key == a.key) f(it) else it })
     }
 
-    /** 지금 관리하는 모임의 열쇠. 없으면 아직 어느 모임에도 들어가지 않은 차다. */
+    /** 지금 관리하는 그룹의 열쇠. 없으면 아직 어느 그룹에도 들어가지 않은 차다. */
     val deviceKey: String? get() = active?.key
-    /** 지금 관리하는 모임에서 이 차 이름 ("아버지 그랜저") */
+    /** 지금 관리하는 그룹에서 이 차 이름 ("아버지 그랜저") */
     var carName: String
         get() = active?.carName.orEmpty()
         set(v) = updateActive { it.copy(carName = v) }
@@ -65,7 +65,7 @@ class TripStore(context: Context) {
     fun ownerOf(circleId: String): String? = memberships.firstOrNull { it.circleId == circleId }?.ownerId
     fun keyOf(circleId: String): String? = memberships.firstOrNull { it.circleId == circleId }?.key
 
-    /** 예전 형식에서 옮겨 온 연결에 모임 id를 채운다 */
+    /** 예전 형식에서 옮겨 온 연결에 그룹 id를 채운다 */
     fun setCircleId(key: String, circleId: String) {
         val list = memberships
         if (list.none { it.key == key && it.circleId != circleId }) return
@@ -73,17 +73,17 @@ class TripStore(context: Context) {
         if (activeCircleId == null) activeCircleId = circleId
     }
 
-    /** 서버가 알려 준 그 모임의 차 주인·이름 */
+    /** 서버가 알려 준 그 그룹의 차 주인·이름 */
     fun syncMembership(key: String, ownerId: String?, carName: String?) =
         saveMemberships(memberships.map { if (it.key == key) it.copy(ownerId = ownerId, carName = carName ?: it.carName) else it })
 
-    /** 모임에 들어갔다. 같은 모임이면 예전 연결을 바꾼다. 들어간 모임을 관리하는 모임으로 한다. */
+    /** 그룹에 들어갔다. 같은 그룹이면 예전 연결을 바꾼다. 들어간 그룹을 관리하는 그룹으로 한다. */
     fun savePairing(key: String, circleId: String, carName: String, ownerId: String?) {
         saveMemberships(memberships.filter { it.circleId != circleId } + Membership(key, circleId, ownerId, carName))
         activeCircleId = circleId
     }
 
-    /** 모임 하나에서 빠졌다 (연결 끊기·모임 지우기·서버가 열쇠를 모름). 남은 연결 수 */
+    /** 그룹 하나에서 빠졌다 (연결 끊기·그룹 지우기·서버가 열쇠를 모름). 남은 연결 수 */
     fun removeMembership(key: String): Int {
         val left = memberships.filter { it.key != key }
         saveMemberships(left)
@@ -91,7 +91,7 @@ class TripStore(context: Context) {
         return left.size
     }
 
-    /** 모든 모임에서 빠졌다: 이 차에 저장된 기록을 모두 지운다 (설정은 남긴다) */
+    /** 모든 그룹에서 빠졌다: 이 차에 저장된 기록을 모두 지운다 (설정은 남긴다) */
     fun clearPairing() {
         device.edit().remove("key").remove("carName").remove("ownerId").remove("memberships").remove("activeCircle").remove("found").remove("spots").remove("pausedCircles").apply()
         val keep = theme
@@ -104,16 +104,16 @@ class TripStore(context: Context) {
         set(v) = device.edit().putBoolean("demoSkipped", v).apply()
 
     /**
-     * 지금 타는 사람이 들어 있지 않은 모임 (쉬는 중). 다른 사람이 자기 코드로 이 차에 들어오면,
-     * 그 사람이 없는 모임의 안부는 이 차에서 열지도 보여 주지도 않는다. 주인이 돌아오면 다시 켠다.
+     * 지금 타는 사람이 들어 있지 않은 그룹 (쉬는 중). 다른 사람이 자기 코드로 이 차에 들어오면,
+     * 그 사람이 없는 그룹의 메시지는 이 차에서 열지도 보여 주지도 않는다. 주인이 돌아오면 다시 켠다.
      */
     var pausedCircles: Set<String>
         get() = device.getStringSet("pausedCircles", emptySet())!!
         set(v) = device.edit().putStringSet("pausedCircles", v).apply()
-    /** 쉬지 않는 모임만 (재생·지도·말로 남기기에 쓴다) */
+    /** 쉬지 않는 그룹만 (재생·지도·말로 남기기에 쓴다) */
     val liveMemberships: List<Membership> get() = pausedCircles.let { p -> memberships.filter { it.circleId !in p } }
 
-    /** 메인 지도에서 가린 모임·사람 (이 차 안에만) */
+    /** 메인 지도에서 가린 그룹·사람 (이 차 안에만) */
     var hiddenCircles: Set<String>
         get() = device.getStringSet("hiddenCircles", emptySet())!!
         set(v) = device.edit().putStringSet("hiddenCircles", v).apply()
@@ -133,7 +133,7 @@ class TripStore(context: Context) {
     // 설정 ------------------------------------------------------------
 
     /**
-     * 지금 관리하는 모임에서 이 차의 주인(이 차를 타는 사람). 날짜가 바뀌어도 그대로다. 다른 모임의 주인은 ownerOf.
+     * 지금 관리하는 그룹에서 이 차의 주인(이 차를 타는 사람). 날짜가 바뀌어도 그대로다. 다른 그룹의 주인은 ownerOf.
      * 차 한 대 = 한 사람: 이 사람에게 온 메시지를 들려주고, 이 사람이 남긴 메시지는 틀지 않는다.
      */
     var driverId: String?
@@ -146,7 +146,7 @@ class TripStore(context: Context) {
         get() = prefs.getString("voiceWhen", "place") ?: "place"
         set(v) = prefs.edit().putString("voiceWhen", v).apply()
 
-    /** 차를 세웠을 때 안부가 열리면 앱 화면을 앞으로 띄울지. 기본은 띄우지 않고 소리로만 */
+    /** 차를 세웠을 때 메시지가 열리면 앱 화면을 앞으로 띄울지. 기본은 띄우지 않고 소리로만 */
     var popUpScreen: Boolean
         get() = prefs.getBoolean("popUpScreen", false)
         set(v) = prefs.edit().putBoolean("popUpScreen", v).apply()
@@ -292,11 +292,11 @@ class TripStore(context: Context) {
         }
 
     /**
-     * 주행 중 말로 저장한 곳 (Gleo 「여기 저장」). 정차한 뒤 안부로 남기거나 지운다. 이 차 안에만 두고 7일이 지나면 지운다.
+     * 주행 중 말로 저장한 곳 (Gleo 「여기 저장」). 정차한 뒤 메시지로 남기거나 지운다. 이 차 안에만 두고 7일이 지나면 지운다.
      * conditions: 저장할 때 차 상황 (rain · night · together)
      */
     data class Spot(val id: String, val lat: Double, val lon: Double, val at: Long, val memo: String, val conditions: String, val address: String = "",
-                    /** 저장할 때 고른 그룹(모임 id). 그 자리에 남기면 이 그룹으로 간다 */ val circleId: String = "")
+                    /** 저장할 때 고른 그룹(그룹 id). 그 자리에 남기면 이 그룹으로 간다 */ val circleId: String = "")
 
     val spots: List<Spot>
         get() {

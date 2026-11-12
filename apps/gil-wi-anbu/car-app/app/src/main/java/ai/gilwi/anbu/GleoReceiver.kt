@@ -97,7 +97,7 @@ object GleoActions {
 
         val memo = str("memo").take(MEMO_MAX)
         val (status, english, korean) = when (action) {
-            // 그룹별로 저장: 「다온, 가족 자리로 여기 저장해 줘」 → 가족 모임의 자리. 그룹을 말하지 않으면 지금 모임.
+            // 그룹별로 저장: 「다온, 가족 자리로 여기 저장해 줘」 → 가족 그룹의 자리. 그룹을 말하지 않으면 지금 그룹.
             "SAVE_SPOT" -> {
                 val group = str("group")
                 val g = Engine.findGroup(group)?.name.orEmpty()
@@ -107,15 +107,15 @@ object GleoActions {
                         if (memo.isNotEmpty()) "「$memo」${withRo(memo)} ${forGroup}여기 저장했어요. 차를 세우면 알려 드릴게요." else "${forGroup}여기 저장했어요. 차를 세우면 알려 드릴게요.")
                     Engine.SpotResult.MERGED -> Triple("success", "This spot is already saved.", "방금 저장한 곳이라 하나로 합쳤어요.")
                     Engine.SpotResult.NO_LOCATION -> Triple("fail", "I couldn't find the current location.", "지금 위치를 몰라서 저장하지 못했어요.")
-                    Engine.SpotResult.NOT_READY -> Triple("fail", "The app isn't connected to a group yet.", "아직 모임에 연결되지 않아 저장하지 못했어요.")
-                    Engine.SpotResult.NO_GROUP -> Triple("fail", "I couldn't find the group $group.", "「$group」 모임을 찾지 못했어요. 가족이나 친구처럼 말해 주세요.")
+                    Engine.SpotResult.NOT_READY -> Triple("fail", "The app isn't connected to a group yet.", "아직 그룹에 연결되지 않아 저장하지 못했어요.")
+                    Engine.SpotResult.NO_GROUP -> Triple("fail", "I couldn't find the group $group.", "「$group」 그룹을 찾지 못했어요. 가족이나 친구처럼 말해 주세요.")
                 }.also { Log.d("Gleo 저장 결과: ${it.first} [$g]") }
             }
             "UNDO_SPOT" -> if (Engine.undoSpot()) Triple("success", "Deleted the spot you just saved.", "방금 저장한 곳을 지웠어요.")
                 else Triple("fail", "There is no saved spot.", "지울 곳이 없어요.")
             else -> Engine.spotCount().let { n ->
                 Triple("success", if (n == 0) "No spots saved today." else "You saved $n spots today.",
-                    if (n == 0) "오늘 저장한 곳이 없어요." else "오늘 ${n}곳 저장했어요. 차를 세우면 안부로 남길 수 있어요.")
+                    if (n == 0) "오늘 저장한 곳이 없어요." else "오늘 ${n}곳 저장했어요. 차를 세우면 메시지로 남길 수 있어요.")
             }
         }
         finish(status, english, korean)
@@ -148,10 +148,10 @@ object GleoActions {
                     if (r.place.isNotEmpty()) "${whoKo} 「${r.text}」라고, ${r.place}에 남겼어요." else "${whoKo} 「${r.text}」라고, ${whenKo} 들려주도록 남겼어요.")
                 Engine.LeaveResult.EMPTY_TEXT -> finish("fail", "There is no note to leave.", "남길 말이 없어요.")
                 Engine.LeaveResult.BAD_WHEN -> finish("fail", "I don't know that timing.", "언제 들려줄지 알 수 없어서 남기지 못했어요.")
-                Engine.LeaveResult.NOT_READY -> finish("fail", "The app isn't connected to a group yet.", "아직 모임에 연결되지 않아 남기지 못했어요.")
-                Engine.LeaveResult.NO_GROUP -> finish("fail", "I couldn't find the group ${r.detail}.", "「${r.detail}」 모임을 찾지 못했어요. 가족이나 친구처럼 말해 주세요.")
+                Engine.LeaveResult.NOT_READY -> finish("fail", "The app isn't connected to a group yet.", "아직 그룹에 연결되지 않아 남기지 못했어요.")
+                Engine.LeaveResult.NO_GROUP -> finish("fail", "I couldn't find the group ${r.detail}.", "「${r.detail}」 그룹을 찾지 못했어요. 가족이나 친구처럼 말해 주세요.")
                 Engine.LeaveResult.NO_AUTHOR -> finish("fail", "The driver isn't set yet.", "운전자가 정해지지 않아 남기지 못했어요.")
-                Engine.LeaveResult.NO_RECIPIENT -> finish("fail", "I couldn't find ${r.detail} in the group.", "모임에서 「${r.detail}」님을 찾지 못했어요.")
+                Engine.LeaveResult.NO_RECIPIENT -> finish("fail", "I couldn't find ${r.detail} in the group.", "그룹에서 「${r.detail}」님을 찾지 못했어요.")
                 Engine.LeaveResult.NO_LOCATION -> finish("fail", "I couldn't find the current location.", "지금 위치를 몰라서 남기지 못했어요.")
                 Engine.LeaveResult.NO_SPOT -> finish("fail", "There is no saved spot.", "저장한 곳이 없어요.")
                 Engine.LeaveResult.FAILED -> finish("fail", "Couldn't leave the note.", "쪽지를 남기지 못했어요. ${r.detail}".trim())

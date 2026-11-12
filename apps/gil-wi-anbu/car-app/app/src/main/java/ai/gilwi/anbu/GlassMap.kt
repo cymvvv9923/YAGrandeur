@@ -15,7 +15,7 @@ import android.widget.FrameLayout
 import kotlin.math.cos
 
 /**
- * 메인 「안부 지도」의 전국 보기: 시·도 경계를 유리판처럼 그린다 (두께·바닥 그림자·안부가 있는 지역의 빛).
+ * 메인 「메시지 지도」의 전국 보기: 시·도 경계를 유리판처럼 그린다 (두께·바닥 그림자·메시지가 있는 지역의 빛).
  * 지역 알약(사진·이름·못 들은 수)은 자식 뷰로 받아, 그 지역 위에 서로 겹치지 않게 놓는다.
  */
 class GlassMap(context: Context) : FrameLayout(context) {
@@ -40,8 +40,8 @@ class GlassMap(context: Context) : FrameLayout(context) {
     }
 
     /**
-     * 안부가 있는 권역 하나: 권역에 든 시·도 코드, 점·알약을 놓을 자리, 윗면 색 두 가지(위·아래), 빛 색, 알약,
-     * level(0~1): 못 들은 안부가 많을수록 1 — 밤에는 불빛이 많아지고 낮에는 색이 진해진다
+     * 메시지가 있는 권역 하나: 권역에 든 시·도 코드, 점·알약을 놓을 자리, 윗면 색 두 가지(위·아래), 빛 색, 알약,
+     * level(0~1): 못 들은 메시지가 많을수록 1 — 밤에는 불빛이 많아지고 낮에는 색이 진해진다
      */
     class Mark(val key: String, val codes: Set<String>, val lat: Double, val lon: Double, val top: Int, val bottom: Int, val glow: Int, val pill: View, val level: Float = 1f)
 
@@ -60,8 +60,8 @@ class GlassMap(context: Context) : FrameLayout(context) {
         set(v) { field = v; invalidate() }
     var onMarkTap: ((Mark) -> Unit)? = null
     /**
-     * 안부가 남겨진 자리 (위도, 경도, 못 들은 것인지). 밤 불빛은 이 자리에서만 난다.
-     * 가까운 자리끼리 묶어, 안부가 많이 모인 곳일수록 크고 밝다. 들은 안부는 은은하게.
+     * 메시지가 남겨진 자리 (위도, 경도, 못 들은 것인지). 밤 불빛은 이 자리에서만 난다.
+     * 가까운 자리끼리 묶어, 메시지가 많이 모인 곳일수록 크고 밝다. 들은 메시지는 은은하게.
      */
     var lights: List<Triple<Double, Double, Boolean>> = emptyList()
         set(v) { field = v; markDirty() }
@@ -130,7 +130,7 @@ class GlassMap(context: Context) : FrameLayout(context) {
 
     // 그리기 ------------------------------------------------------------
     // 움직이지 않는 부분(그림자·두께·흐린 빛·땅·바다 격자)은 한 장으로 미리 그려 두고(base),
-    // 매 프레임에는 움직이는 것(반짝이는 불빛·숨 쉬는 안부 불빛·위성·물결)과 점만 그 위에 그린다.
+    // 매 프레임에는 움직이는 것(반짝이는 불빛·숨 쉬는 메시지 불빛·위성·물결)과 점만 그 위에 그린다.
     // 흐림(BlurMaskFilter)은 소프트웨어로 그려 무겁기 때문에, 매 프레임 다시 그리면 안 된다.
 
     private var base: android.graphics.Bitmap? = null
@@ -140,7 +140,7 @@ class GlassMap(context: Context) : FrameLayout(context) {
     /** 반짝일 작은 불빛 (x, y, 반지름, 색, 빛의 위상, 빠르기) */
     private class Spark(val x: Float, val y: Float, val r: Float, val color: Int, val phase: Float, val speed: Float)
     private var sparks: List<Spark> = emptyList()
-    /** 숨 쉴 안부 불빛 덩어리 (x, y, 무게, 못 들은 수) */
+    /** 숨 쉴 메시지 불빛 덩어리 (x, y, 무게, 못 들은 수) */
     private var clusters: List<FloatArray> = emptyList()
     private val startAt = android.os.SystemClock.uptimeMillis()
 
@@ -230,7 +230,7 @@ class GlassMap(context: Context) : FrameLayout(context) {
         marks.forEach { m ->
             val b = regionRect(m.codes) ?: return@forEach
             val dim = selected != null && selected != m.key
-            // 낮: 권역마다 제 색을 쓰되, 안부가 적으면 거의 흰빛으로 옅게, 많으면 진하게. 밤은 색 대신 불빛으로
+            // 낮: 권역마다 제 색을 쓰되, 메시지가 적으면 거의 흰빛으로 옅게, 많으면 진하게. 밤은 색 대신 불빛으로
             val lv = m.level.coerceIn(0f, 1f)
             val top = if (night) m.top else strength(m.top, lv)
             val bottom = if (night) m.bottom else strength(m.bottom, lv)
@@ -305,7 +305,7 @@ class GlassMap(context: Context) : FrameLayout(context) {
         return true
     }
 
-    /** 한국의 야경: 바탕(권역의 따뜻한 빛 · 도시의 옅은 빛)은 한 장에, 반짝임과 안부 불빛은 매 프레임 */
+    /** 한국의 야경: 바탕(권역의 따뜻한 빛 · 도시의 옅은 빛)은 한 장에, 반짝임과 메시지 불빛은 매 프레임 */
     private val lightGlow = Paint(Paint.ANTI_ALIAS_FLAG).apply { xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SCREEN) }
     private val lightDot = Paint(Paint.ANTI_ALIAS_FLAG).apply { xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SCREEN) }
     /** 도시가 든 시·도 코드 (한 번만 찾는다) */
@@ -316,13 +316,13 @@ class GlassMap(context: Context) : FrameLayout(context) {
 
     private fun drawNightStill(canvas: Canvas, u: Float) {
         canvas.save(); canvas.clipPath(all)
-        // 안부가 있는 권역은 땅 전체가 은은하게 따뜻해진다 (많을수록 조금 더)
+        // 메시지가 있는 권역은 땅 전체가 은은하게 따뜻해진다 (많을수록 조금 더)
         marks.forEach { m ->
             val lv = m.level.coerceIn(0f, 1f)
             regionFill.color = Color.argb((22 + 38 * lv).toInt(), 255, 196, 120)
             m.codes.forEach { c -> paths[c]?.let { canvas.drawPath(it, regionFill) } }
         }
-        // 도시 바탕빛: 안부가 없는 권역은 아주 옅게, 안부가 있는 권역은 그보다 밝게
+        // 도시 바탕빛: 메시지가 없는 권역은 아주 옅게, 메시지가 있는 권역은 그보다 밝게
         CITIES.forEachIndexed { idx, (lat, lon, w0) ->
             val lv = cityLevel(idx)
             val boost = if (lv == null) 1f else 2.2f + 1.8f * lv.coerceIn(0f, 1f)
@@ -340,7 +340,7 @@ class GlassMap(context: Context) : FrameLayout(context) {
     private fun prepareLive(u: Float) {
         val rnd = java.util.Random(42)
         val list = mutableListOf<Spark>()
-        // 안부가 있는 권역의 도시엔 작은 불빛 (반짝인다)
+        // 메시지가 있는 권역의 도시엔 작은 불빛 (반짝인다)
         CITIES.forEachIndexed { idx, (lat, lon, w0) ->
             val lv = cityLevel(idx) ?: return@forEachIndexed
             val x = px(lon); val y = py(lat); val r = (7f + 30f * w0) * u
@@ -350,7 +350,7 @@ class GlassMap(context: Context) : FrameLayout(context) {
                     Color.argb(90 + rnd.nextInt(80), 255, 226 + rnd.nextInt(25), 160 + rnd.nextInt(60)), rnd.nextFloat() * 6.28f, 0.6f + rnd.nextFloat() * 1.6f)
             }
         }
-        // 안부 자리의 불빛 덩어리: 화면에서 가까운(약 14km) 자리끼리. 못 들은 안부 1개 = 1, 들은 안부 = 0.35
+        // 메시지 자리의 불빛 덩어리: 화면에서 가까운(약 14km) 자리끼리. 못 들은 메시지 1개 = 1, 들은 메시지 = 0.35
         val cl = mutableListOf<FloatArray>()
         lights.forEach { (lat, lon, fresh) ->
             val x = px(lon); val y = py(lat)
@@ -369,7 +369,7 @@ class GlassMap(context: Context) : FrameLayout(context) {
         sparks = list; clusters = cl
     }
 
-    /** 밤의 움직임: 불빛이 별처럼 반짝이고, 안부 불빛은 숨 쉬듯 커졌다 작아지고, 위성 불빛이 깜빡이며 지나간다 */
+    /** 밤의 움직임: 불빛이 별처럼 반짝이고, 메시지 불빛은 숨 쉬듯 커졌다 작아지고, 위성 불빛이 깜빡이며 지나간다 */
     private fun drawNightLive(canvas: Canvas, u: Float, t: Float) {
         canvas.save(); canvas.clipPath(all)
         clusters.forEachIndexed { i, c ->

@@ -39,13 +39,13 @@ object Engine : CarSignals.Listener {
     private lateinit var car: CarSignals
     private lateinit var player: Player
 
-    /** 이 차가 들어간 모든 모임 (id → 모임) */
+    /** 이 차가 들어간 모든 그룹 (id → 그룹) */
     val circles = LinkedHashMap<String, Circle>()
-    /** 지금 관리하는 모임 (설정·모임 관리·남기기가 다룬다). 바뀐 모임을 넣으면 목록도 고친다. */
+    /** 지금 관리하는 그룹 (설정·그룹 관리·남기기가 다룬다). 바뀐 그룹을 넣으면 목록도 고친다. */
     var circle: Circle?
         get() = store.active?.circleId?.let { circles[it] }
         set(v) { if (v != null) circles[v.id] = v }
-    /** 모든 모임의 메시지 (지도·근처 계산·재생은 모임을 가리지 않는다) */
+    /** 모든 그룹의 메시지 (지도·근처 계산·재생은 그룹을 가리지 않는다) */
     var messages: List<PlaceMessage> = emptyList()
         private set
     private val messagesByKey = HashMap<String, List<PlaceMessage>>()
@@ -83,7 +83,7 @@ object Engine : CarSignals.Listener {
         private set
     private var seatOccupied = false
     private var otherBelt = false
-    // 열리는 조건의 규약 (ConditionRules): 신호가 잠깐 튄 것으로 안부가 열리지 않게
+    // 열리는 조건의 규약 (ConditionRules): 신호가 잠깐 튄 것으로 메시지가 열리지 않게
     private var frontBelt = false
     private var rearBelt = false
     /** 「옆자리에 누가 탄 날」을 여는 동승: 착석+벨트가 이어질 때. passengerNow(사생활 보호)보다 엄격하다 */
@@ -95,7 +95,7 @@ object Engine : CarSignals.Listener {
     private var nightForced = false
     /** P로 바꾼 때 (오래 운전: 짧게 쉰 것은 이어서 센다) */
     private var parkedAt = 0L
-    /** 차가 켜진 뒤 이때까지 메시지가 들어올 때마다 「차에 탈 때」·「시동 걸 때」를 연다 (모임마다 늦게 받아도 놓치지 않게) */
+    /** 차가 켜진 뒤 이때까지 메시지가 들어올 때마다 「차에 탈 때」·「시동 걸 때」를 연다 (그룹마다 늦게 받아도 놓치지 않게) */
     private var bootOpenUntil = 0L
     /** 「오래 운전할 때」를 세기 시작한 때 */
     private var longStartAt = 0L
@@ -111,13 +111,13 @@ object Engine : CarSignals.Listener {
         private set
     var feedDiaries: List<Api.Diary> = emptyList()
         private set
-    /** 이 차가 아직 모임에 들어가지 않았다. 화면은 「새 모임 만들기 / 초대 코드로 들어가기」를 보여 준다. */
+    /** 이 차가 아직 그룹에 들어가지 않았다. 화면은 「새 그룹 만들기 / 초대 코드로 들어가기」를 보여 준다. */
     var needPairing = false
         private set
     /** 처음 화면에 계속 보여 줄 마지막 실패 이유 (토스트는 금방 사라져서) */
     var setupError: String? = null
         private set
-    /** 처음 화면에서 서버가 닿는지 5초마다 본다 (모임에 들어가면 멈춘다) */
+    /** 처음 화면에서 서버가 닿는지 5초마다 본다 (그룹에 들어가면 멈춘다) */
     private val pingTask = object : Runnable {
         override fun run() {
             if (!needPairing) return
@@ -128,7 +128,7 @@ object Engine : CarSignals.Listener {
         }
     }
 
-    /** 모임을 만들거나 들어가는 중 (버튼을 두 번 누르지 않게) */
+    /** 그룹을 만들거나 들어가는 중 (버튼을 두 번 누르지 않게) */
     var setupBusy = false
         private set
     /** 차 고유번호(VIN)의 해시. 서버는 같은 차가 두 번 들어오면 예전 연결을 끊는다. 원래 번호는 보내지 않는다. */
@@ -158,7 +158,7 @@ object Engine : CarSignals.Listener {
         Api.onUnauthorized = ::dropKey
         if (Api.key == null) beginPairing() else refreshFromServer()
         if (BuildConfig.STANDALONE && Api.key == null && !store.demoSkipped) main.postDelayed({ joinDemo() }, 2500)
-        // 다른 모임에 더 들어갈 때도 차 고유번호(해시)를 쓴다
+        // 다른 그룹에 더 들어갈 때도 차 고유번호(해시)를 쓴다
         main.postDelayed({ car.readVin { vin -> if (vinHash == null) useVin(vin) } }, 2000)
     }
 
@@ -178,7 +178,7 @@ object Engine : CarSignals.Listener {
 
     // 서버 ------------------------------------------------------------
 
-    // 모임 들어가기 (로그인 없음: 모임을 만들거나 초대 코드를 넣는다) --------------------
+    // 그룹 들어가기 (로그인 없음: 그룹을 만들거나 초대 코드를 넣는다) --------------------
 
     private fun beginPairing() {
         needPairing = true
@@ -200,7 +200,7 @@ object Engine : CarSignals.Listener {
         vinHash = sha256("gilwi-car:" + (vin ?: store.installId))
     }
 
-    /** 새 모임 만들기 (이미 다른 모임에 있어도 하나 더). 만든 사람이 이 차의 주인이 된다. 실패하면 오류 문구 */
+    /** 새 그룹 만들기 (이미 다른 그룹에 있어도 하나 더). 만든 사람이 이 차의 주인이 된다. 실패하면 오류 문구 */
     fun createCircle(circleName: String, type: String, myName: String, title: String, color: String, done: (String?) -> Unit) {
         if (vinHash == null) useVin(null)
         setupBusy = true; changed()
@@ -222,9 +222,9 @@ object Engine : CarSignals.Listener {
             changed(); done(setupError); return
         }
         setupError = null
-        Log.d("모임에 들어감: ${r.circle.name} (${r.carName})")
+        Log.d("그룹에 들어감: ${r.circle.name} (${r.carName})")
         serverOk = true
-        // 다른 모임에 이미 들어가 있으면 대기열은 그대로 두고 모임만 더한다
+        // 다른 그룹에 이미 들어가 있으면 대기열은 그대로 두고 그룹만 더한다
         if (needPairing) pendingRestored = false
         store.savePairing(r.key, r.circle.id, r.carName, r.memberId)
         Api.key = r.key
@@ -236,8 +236,8 @@ object Engine : CarSignals.Listener {
     }
 
     /**
-     * 누가 자기 코드로 이 차에 들어왔다: 차 한 대 = 한 사람이므로 다른 모임도 그 사람 차로 맞춘다.
-     * 다른 모임에 같은 이름의 사람이 있으면 그 사람을 주인으로, 없으면 그 모임은 쉰다(안부를 열지도 보여 주지도 않음).
+     * 누가 자기 코드로 이 차에 들어왔다: 차 한 대 = 한 사람이므로 다른 그룹도 그 사람 차로 맞춘다.
+     * 다른 그룹에 같은 이름의 사람이 있으면 그 사람을 주인으로, 없으면 그 그룹은 쉰다(메시지를 열지도 보여 주지도 않음).
      * 원래 주인이 자기 코드로 돌아오면 같은 규칙으로 다시 켜진다.
      */
     private fun followDriver(joinedCircleId: String, name: String) {
@@ -249,30 +249,30 @@ object Engine : CarSignals.Listener {
             paused -= ms.circleId
             if (ms.ownerId != same.id) Api.setOwner(same.id, ms.key) { car -> if (car != null) store.syncMembership(ms.key, same.id, car) }
         }
-        if (paused != store.pausedCircles) Log.d("차 주인이 $name(으)로: 쉬는 모임 ${paused.mapNotNull { circles[it]?.name }}")
+        if (paused != store.pausedCircles) Log.d("차 주인이 $name(으)로: 쉬는 그룹 ${paused.mapNotNull { circles[it]?.name }}")
         store.pausedCircles = paused
         pending.removeAll { it.circleId in paused }; skipped.removeAll { it.circleId in paused }
         if (playing?.circleId in paused) { player.stop(); playing = null; Notifier.clearPlaying(); ui?.onPlaybackEnd() }
     }
 
-    /** 관리하는 모임 바꾸기 (설정의 「모임 바꾸기」). 지도·재생은 그대로 모든 모임을 쓴다. */
+    /** 관리하는 그룹 바꾸기 (설정의 「그룹 바꾸기」). 지도·재생은 그대로 모든 그룹을 쓴다. */
     fun switchCircle(circleId: String) {
         if (store.keyOf(circleId) == null) return
         store.activeCircleId = circleId
         Api.key = store.deviceKey
-        Log.d("관리하는 모임: ${circles[circleId]?.name}")
+        Log.d("관리하는 그룹: ${circles[circleId]?.name}")
         changed()
         loadFeed()
     }
 
     /**
-     * 서버가 그 열쇠를 모른다(모임에서 이 차를 뺐거나 모임이 지워짐) 또는 이 차가 연결을 끊었다: 그 모임만 뺀다.
-     * 남은 모임이 없으면 처음 화면으로 돌아간다.
+     * 서버가 그 열쇠를 모른다(그룹에서 이 차를 뺐거나 그룹이 지워짐) 또는 이 차가 연결을 끊었다: 그 그룹만 뺀다.
+     * 남은 그룹이 없으면 처음 화면으로 돌아간다.
      */
     private fun dropKey(key: String) {
         if (needPairing) return
         val gone = store.memberships.firstOrNull { it.key == key } ?: return
-        Log.d("모임에서 빠짐: ${circles[gone.circleId]?.name ?: gone.circleId}")
+        Log.d("그룹에서 빠짐: ${circles[gone.circleId]?.name ?: gone.circleId}")
         val left = store.removeMembership(key)
         if (left == 0) { unpairedAll(); return }
         circles.remove(gone.circleId); messagesByKey.remove(key); heardByKey.remove(key); loadedKeys.remove(key)
@@ -283,9 +283,9 @@ object Engine : CarSignals.Listener {
         changed()
     }
 
-    // 앱만 버전: 처음 켜면 시연 가족에 「원우의 차」로 바로 들어간다 ---------------------
+    // 앱만 버전: 처음 켜면 시연 가족에 「용민의 차」로 바로 들어간다 ---------------------
 
-    /** 우리집(원우) → 대학 동기(원우) → 우리 둘(원우) 순서로 들어가고, 관리하는 모임은 우리집 */
+    /** 우리집(용민) → 대학 동기(용민) → 우리 둘(용민) 순서로 들어가고, 관리하는 그룹은 우리집 */
     fun joinDemo(done: () -> Unit = {}) {
         if (!BuildConfig.STANDALONE) return
         Log.d("시연 가족으로 시작")
@@ -293,7 +293,7 @@ object Engine : CarSignals.Listener {
             if (e1 != null) { Log.d("시연 가족 실패: $e1"); done(); return@joinCircle }
             setOwner(DEMO_OWNER) {
                 joinCircle(DEMO_FRIENDS) { e2 ->
-                    // 열쇠는 그 모임에 들어간 직후의 것으로 붙잡아 둔다 (다음 모임에 들어가면 Api.key가 바뀐다)
+                    // 열쇠는 그 그룹에 들어간 직후의 것으로 붙잡아 둔다 (다음 그룹에 들어가면 Api.key가 바뀐다)
                     val k2 = Api.key
                     if (e2 == null && k2 != null) Api.setOwner(DEMO_FRIEND_OWNER, k2) { name -> store.syncMembership(k2, DEMO_FRIEND_OWNER, name) }
                     joinCircle(DEMO_COUPLE) { e3 ->
@@ -324,9 +324,9 @@ object Engine : CarSignals.Listener {
         main.postDelayed({ joinDemo(done) }, 500)
     }
 
-    /** 모든 모임에서 빠졌다: 처음부터 다시 연결 */
+    /** 모든 그룹에서 빠졌다: 처음부터 다시 연결 */
     private fun unpairedAll() {
-        Log.d("들어간 모임이 없어 처음 화면으로")
+        Log.d("들어간 그룹이 없어 처음 화면으로")
         store.clearPairing()
         // 앱만 버전: 직접 연결을 끊었으면 다음에 켤 때 시연 가족으로 저절로 들어가지 않는다
         if (BuildConfig.STANDALONE) store.demoSkipped = true
@@ -336,7 +336,7 @@ object Engine : CarSignals.Listener {
         beginPairing()
     }
 
-    /** 설정의 「이 차 연결 끊기」: 지금 관리하는 모임에서만 빠진다 */
+    /** 설정의 「이 차 연결 끊기」: 지금 관리하는 그룹에서만 빠진다 */
     fun unlink(done: (Boolean) -> Unit) {
         val key = Api.key ?: return done(false)
         Api.unlinkCar { ok ->
@@ -345,10 +345,10 @@ object Engine : CarSignals.Listener {
         }
     }
 
-    /** 모임 통째로 지우기. 이 차의 그 모임 열쇠도 함께 없어진다. 실패하면 오류 문구 */
+    /** 그룹 통째로 지우기. 이 차의 그 그룹 열쇠도 함께 없어진다. 실패하면 오류 문구 */
     fun deleteCircle(done: (String?) -> Unit) {
-        val name = circle?.name ?: return done("모임을 불러오지 못했어요")
-        val key = Api.key ?: return done("모임을 불러오지 못했어요")
+        val name = circle?.name ?: return done("그룹을 불러오지 못했어요")
+        val key = Api.key ?: return done("그룹을 불러오지 못했어요")
         Api.deleteCircle(name) { err ->
             if (err == null) dropKey(key)
             done(err)
@@ -382,7 +382,7 @@ object Engine : CarSignals.Listener {
                 }
                 if (++answered < list.size) return@loadCircle
                 serverOk = okAny
-                // 빠진 모임은 목록에서도 뺀다
+                // 빠진 그룹은 목록에서도 뺀다
                 val ids = store.memberships.map { it.circleId }.toSet()
                 circles.keys.retainAll(ids)
                 changed()
@@ -408,7 +408,7 @@ object Engine : CarSignals.Listener {
     fun refreshMessages() = store.memberships.forEach { ms ->
         Api.loadMessages(CIRCLE, ms.key) { list ->
             if (list != null) {
-                // 서버가 모임을 안 붙여 보내도 어느 모임 것인지 안다
+                // 서버가 그룹을 안 붙여 보내도 어느 그룹 것인지 안다
                 messagesByKey[ms.key] = list.map { if (it.circleId.isEmpty()) it.copy(circleId = ms.circleId) else it }
                 loadedKeys += ms.key
                 rebuildMessages()
@@ -431,14 +431,14 @@ object Engine : CarSignals.Listener {
         }
     }
 
-    /** 차가 켜진 뒤 모든 모임의 메시지를 받았으면 「차에 탈 때」·「시동 걸 때」를 연다 (받기 전에 열면 놓친다) */
+    /** 차가 켜진 뒤 모든 그룹의 메시지를 받았으면 「차에 탈 때」·「시동 걸 때」를 연다 (받기 전에 열면 놓친다) */
     private fun tryBootOpen() {
         // 앱만 버전(시연)은 앱을 켠 것을 시동으로 치지 않는다: 「시동을 걸면」·「차에 타면」 시연 카드가 그 순간을 만든다
         if (BuildConfig.STANDALONE) return
         if (System.currentTimeMillis() > bootOpenUntil) return
         if (messages.isEmpty()) return
-        Log.d("차 켜짐: 탈 때·시동 안부 열기 (받은 모임 ${loadedKeys.size}곳)")
-        // 같은 안부는 하루 한 번(markDelivered)이라 여러 번 불러도 한 번만 열린다
+        Log.d("차 켜짐: 탈 때·시동 메시지 열기 (받은 그룹 ${loadedKeys.size}곳)")
+        // 같은 메시지는 하루 한 번(markDelivered)이라 여러 번 불러도 한 번만 열린다
         deliver(messages.filter { it.opensOn == "door" || it.opensOn == "start" })
     }
 
@@ -446,7 +446,7 @@ object Engine : CarSignals.Listener {
         messages = store.liveMemberships.flatMap { messagesByKey[it.key].orEmpty() }
     }
 
-    /** 「들었어요」 기록은 모든 모임 것을 모은다 (지도의 찾은 수). 일기는 지금 관리하는 모임 것만 (소식 화면). */
+    /** 「들었어요」 기록은 모든 그룹 것을 모은다 (지도의 찾은 수). 일기는 지금 관리하는 그룹 것만 (소식 화면). */
     fun loadFeed() = store.memberships.forEach { ms ->
         Api.loadFeed(CIRCLE, ms.key) { h, d ->
             if (h != null) {
@@ -463,9 +463,9 @@ object Engine : CarSignals.Listener {
         feedHeard = store.memberships.flatMap { heardByKey[it.key].orEmpty() }.sortedByDescending { it.at }
     }
 
-    /** 이 메시지가 속한 모임에서 이 차의 주인 */
+    /** 이 메시지가 속한 그룹에서 이 차의 주인 */
     fun ownerOf(m: PlaceMessage): String? = if (m.circleId.isEmpty()) store.driverId else store.ownerOf(m.circleId)
-    /** 이 메시지가 속한 모임의 열쇠 */
+    /** 이 메시지가 속한 그룹의 열쇠 */
     private fun keyOf(m: PlaceMessage): String? = store.keyOf(m.circleId) ?: Api.key
 
     /**
@@ -511,7 +511,7 @@ object Engine : CarSignals.Listener {
 
     /**
      * 「이 차는 누구 차인가요?」는 묻지 않는다 (팀 결정, 시나리오는 한 사람의 차로 흘러간다).
-     * 주인이 없는 모임(가족 공용 코드로 들어온 경우 등)은 기본 사람으로 저절로 정한다: 시연 가족이면 원우, 아니면 모임의 첫 사람.
+     * 주인이 없는 그룹(가족 공용 코드로 들어온 경우 등)은 기본 사람으로 저절로 정한다: 시연 가족이면 용민, 아니면 그룹의 첫 사람.
      * 바꾸려면 폰 웹이나 그 사람의 「내 코드」로 다시 들어오면 된다.
      */
     private fun ensureOwners() {
@@ -540,13 +540,13 @@ object Engine : CarSignals.Listener {
 
     fun setDemoLocation(loc: Pair<Double, Double>?) { if (loc != null) demoBypass { car.demoLocation = loc } else car.demoLocation = null }
 
-    /** 시연 동작(이동·시동·세우기) 동안에는 시간대·요일·날짜 조건과 「하루 한 번」을 보지 않는다. 한 번만 들을 안부를 이미 들었으면 그대로 안 연다. */
+    /** 시연 동작(이동·시동·세우기) 동안에는 시간대·요일·날짜 조건과 「하루 한 번」을 보지 않는다. 한 번만 들을 메시지를 이미 들었으면 그대로 안 연다. */
     private var demoNow = false
     private fun demoBypass(action: () -> Unit) { demoNow = true; try { action() } finally { demoNow = false } }
     /** 시연으로 옮겨 둔 자리 (없으면 실제 GPS·내비 위치) */
     val demoLocation get() = car.demoLocation
 
-    /** 시연: 시동을 건 것처럼 「시동 걸 때」 안부를 연다 */
+    /** 시연: 시동을 건 것처럼 「시동 걸 때」 메시지를 연다 */
     fun demoStart(): Int = demoCount { demoBypass { deliver(messages.filter { it.opensOn == "start" }) } }
 
     /** 시연: 달리다가 지금 자리에서 P로 세운 것처럼 (「도착해 차를 세울 때」). 내비 화면으로 넘어가지 않게 D는 거치지 않는다. */
@@ -559,7 +559,7 @@ object Engine : CarSignals.Listener {
 
     /**
      * 시연: 차 신호를 받은 것처럼. kind = door 운전석 문 · rain 와이퍼 · night 전조등 · together 조수석 · warning 경고등 · long 2시간 넘게 달림.
-     * 새로 열린 안부 개수를 돌려준다.
+     * 새로 열린 메시지 개수를 돌려준다.
      */
     fun demoSignal(kind: String, on: Boolean = true): Int = demoCount {
         demoBypass {
@@ -574,7 +574,7 @@ object Engine : CarSignals.Listener {
         }
     }
 
-    /** 시연 동작으로 새로 열린 안부 개수 */
+    /** 시연 동작으로 새로 열린 메시지 개수 */
     private fun demoCount(action: () -> Unit): Int {
         val before = pending.map { it.id }.toSet() + listOfNotNull(playing?.id)
         action()
@@ -592,7 +592,7 @@ object Engine : CarSignals.Listener {
         this.gear = gear
         Log.d("기어 $prev → $gear driver=${store.driverId}")
         // 이 차는 시동 신호(IGNITION_STATE)가 없어서, 켜진 뒤 처음 받은 기어를 「시동 걸 때」로 본다
-        // 규약: 처음 받은 기어가 P일 때만 (달리는 중에 앱만 다시 켜진 것은 빼고), 마지막 시동 안부에서 30분이 지났을 때
+        // 규약: 처음 받은 기어가 P일 때만 (달리는 중에 앱만 다시 켜진 것은 빼고), 마지막 시동 메시지에서 30분이 지났을 때
         // 「차에 탈 때」도 같은 때 연다: 시동이 꺼진 차에서는 앱이 없어 타면서 연 문을 볼 수 없다
         if (prev == null && gear == CarSignals.Gear.P && System.currentTimeMillis() - store.lastStartAt > ConditionRules.START_GAP_MS) {
             store.lastStartAt = System.currentTimeMillis()
@@ -613,9 +613,9 @@ object Engine : CarSignals.Listener {
             if (prev != null && droveSinceLastPark) {
                 store.onParkedAfterDriving()
                 uploadDiary()
-                // 이번 주행에 말로 저장한 곳이 있으면, 세웠을 때 한 번 알려 준다 (들을 안부가 있으면 그 안내에 맡긴다)
+                // 이번 주행에 말로 저장한 곳이 있으면, 세웠을 때 한 번 알려 준다 (들을 메시지가 있으면 그 안내에 맡긴다)
                 val n = store.spots.count { it.at >= driveStartedAt }
-                if (n > 0 && pending.isEmpty()) main.postDelayed({ say("달리면서 저장한 곳이 ${n}곳 있어요. 화면에서 안부로 남길 수 있어요.") }, 1500)
+                if (n > 0 && pending.isEmpty()) main.postDelayed({ say("달리면서 저장한 곳이 ${n}곳 있어요. 화면에서 메시지로 남길 수 있어요.") }, 1500)
                 // 「도착해 차를 세울 때」: 장소가 없으면 어디서든, 있으면 그 근처에서 세웠을 때 (시동 끔 신호가 없어 P로 본다)
                 // 규약: 이번 주행이 2분 이상이거나 300m 이상이고, P를 20초 넘게 유지할 때 (신호대기 중 잠깐 P는 빼고)
                 val longEnough = parkedAt - driveStartedAt >= ConditionRules.PARK_MIN_DRIVE_MS || tripMeters >= ConditionRules.PARK_MIN_DRIVE_M
@@ -624,7 +624,7 @@ object Engine : CarSignals.Listener {
                 else if (longEnough) {
                     parkCheck?.let { main.removeCallbacks(it) }
                     parkCheck = Runnable { parkCheck = null; if (this.gear == CarSignals.Gear.P) openPark() }.also { main.postDelayed(it, ConditionRules.PARK_HOLD_MS) }
-                } else Log.d("도착 안부: 이번 주행이 짧아 열지 않음")
+                } else Log.d("도착 메시지: 이번 주행이 짧아 열지 않음")
             }
             // 달리면서 듣던 것은 세워도 그대로, 화면만 재생 화면으로
             if (playing != null) ui?.onPlayback()
@@ -836,14 +836,14 @@ object Engine : CarSignals.Listener {
         })
     }
 
-    /** 조건이 맞은 메시지를 대기열에 넣는다. 같은 메시지는 하루 한 번. 내가 남긴 것인지는 그 메시지 모임의 주인으로 본다. */
+    /** 조건이 맞은 메시지를 대기열에 넣는다. 같은 메시지는 하루 한 번. 내가 남긴 것인지는 그 메시지 그룹의 주인으로 본다. */
     private fun deliver(candidates: List<PlaceMessage>) {
         val added = mutableListOf<PlaceMessage>()
         for (m in candidates) {
             val driver = ownerOf(m)
             if (m.authorId == driver) continue
             if (m.to.isNotEmpty() && driver !in m.to) continue // 다른 사람에게 보낸 것
-            // 시연은 시간대·요일은 건너뛰지만 시작·끝 날짜는 지킨다 (「1년 뒤부터」 남긴 안부가 바로 열리면 안 된다)
+            // 시연은 시간대·요일은 건너뛰지만 시작·끝 날짜는 지킨다 (「1년 뒤부터」 남긴 메시지가 바로 열리면 안 된다)
             if (!(if (demoNow) dateOk(m) else timeOk(m))) continue
             if (!repeatOk(m, driver)) continue
             if (m.kind == "text" && !store.acceptTts) continue
@@ -867,7 +867,7 @@ object Engine : CarSignals.Listener {
     }
 
     private fun timeOk(m: PlaceMessage): Boolean {
-        // 규약: 차 시계가 아직 맞춰지지 않았으면 시간대·요일·날짜가 있는 안부는 미룬다
+        // 규약: 차 시계가 아직 맞춰지지 않았으면 시간대·요일·날짜가 있는 메시지는 미룬다
         val hasTime = m.notBefore != null || m.notAfter != null || m.days.isNotEmpty() || (m.hourFrom != null && m.hourTo != null)
         if (hasTime && !ConditionRules.clockOk()) return false
         val now = java.time.LocalDateTime.now()
@@ -922,7 +922,7 @@ object Engine : CarSignals.Listener {
         startPlayback(announce = true, auto = true)
     }
 
-    /** 옆자리에 누가 있으면 어떤 안부든 틀기 전에 묻는다 (예전 「옆자리에 누가 탄 날」 안부도 예외 없이) */
+    /** 옆자리에 누가 있으면 어떤 메시지든 틀기 전에 묻는다 (예전 「옆자리에 누가 탄 날」 메시지도 예외 없이) */
     private fun needsPassengerOk() = passengerNow && store.askWithPassenger && !passengerOk && pending.isNotEmpty()
 
     /** 동승 중 묻기에 「다음에 들을게요」 */
@@ -934,7 +934,7 @@ object Engine : CarSignals.Listener {
     }
 
     /** 오늘 들은 메시지를 다시 모아 듣는다. 아직 안 들은 것이 있으면 그것부터. */
-    /** 기다리는 안부 지금 듣기. 모임을 골라 두었으면 그 모임 것부터 */
+    /** 기다리는 메시지 지금 듣기. 그룹을 골라 두었으면 그 그룹 것부터 */
     fun playNow(circleId: String? = null) {
         if (circleId != null) { val (mine, rest) = pending.partition { it.circleId == circleId }; pending.clear(); pending.addAll(mine + rest) }
         startPlayback(announce = false)
@@ -946,7 +946,7 @@ object Engine : CarSignals.Listener {
             .filter { circleId == null || it.circleId == circleId }
         replayIds += again.map { it.id }
         pending.addAll(again)
-        // 모임을 골라 두었으면 그 모임 안부부터 (다른 모임 것은 지우지 않고 뒤로)
+        // 그룹을 골라 두었으면 그 그룹 메시지부터 (다른 그룹 것은 지우지 않고 뒤로)
         if (circleId != null) { val (mine, rest) = pending.partition { it.circleId == circleId }; pending.clear(); pending.addAll(mine + rest) }
         startPlayback(announce = false)
     }
@@ -985,7 +985,7 @@ object Engine : CarSignals.Listener {
 
     /**
      * 지금 자리를 임시로 저장한다. 1분 안에 200m 안에서 또 저장하면 하나로 합친다 (메모는 새것으로).
-     * groupQuery(「가족」「친구」·모임 이름)를 주면 그 그룹 자리로 저장하고, 비면 지금 관리하는 모임.
+     * groupQuery(「가족」「친구」·그룹 이름)를 주면 그 그룹 자리로 저장하고, 비면 지금 관리하는 그룹.
      */
     fun saveSpot(memo: String, groupQuery: String = ""): SpotResult {
         if (needPairing) return SpotResult.NOT_READY
@@ -1036,7 +1036,7 @@ object Engine : CarSignals.Listener {
         "couple" to listOf("연인", "커플", "애인", "couple"),
     )
 
-    /** "가족" · "친구들한테" · "대학 동기" · "우리집" → 이 차가 들어간 모임. 비면 지금 관리하는 모임. */
+    /** "가족" · "친구들한테" · "대학 동기" · "우리집" → 이 차가 들어간 그룹. 비면 지금 관리하는 그룹. */
     fun findGroup(query: String): Circle? {
         val joined = store.memberships.mapNotNull { circles[it.circleId] }
         val q = query.trim().removeSuffix("에게").removeSuffix("한테").removeSuffix("께").removeSuffix("들").removeSuffix("방").trim()
@@ -1046,12 +1046,12 @@ object Engine : CarSignals.Listener {
             ?: joined.firstOrNull { it.name.contains(q) || q.contains(it.name) }
     }
 
-    /** 이 차가 들어간 모임 이름들 (「녹음해 줘」에서 이 중 하나를 정확히 말해야 그 모임에 남는다) */
+    /** 이 차가 들어간 그룹 이름들 (「녹음해 줘」에서 이 중 하나를 정확히 말해야 그 그룹에 남는다) */
     fun groupNames(): List<String> = store.liveMemberships.mapNotNull { circles[it.circleId]?.name }
 
     /**
-     * 모임 이름을 정확히 말했을 때만 그 모임: 「우리집」「대학 동기」(띄어쓰기·「우리집에」「우리집으로」 같은 조사는 봐준다).
-     * 「가족」「친구」처럼 종류로만 말하면 찾지 않는다 — 운전 중 녹음은 엉뚱한 모임에 남지 않게 정확히 고른다.
+     * 그룹 이름을 정확히 말했을 때만 그 그룹: 「우리집」「대학 동기」(띄어쓰기·「우리집에」「우리집으로」 같은 조사는 봐준다).
+     * 「가족」「친구」처럼 종류로만 말하면 찾지 않는다 — 운전 중 녹음은 엉뚱한 그룹에 남지 않게 정확히 고른다.
      */
     fun findGroupExact(query: String): Circle? {
         fun squash(s: String) = s.replace(Regex("\\s+"), "")
@@ -1062,7 +1062,7 @@ object Engine : CarSignals.Listener {
         return joined.firstOrNull { squash(it.name) == raw } ?: joined.firstOrNull { squash(it.name) == stripped }
     }
 
-    /** recipients: 실제로 받는 사람 이름 (비면 모임 모두), place: 장소 조건이면 장소 이름, detail: 실패 이유(못 찾은 이름·서버 오류) */
+    /** recipients: 실제로 받는 사람 이름 (비면 그룹 모두), place: 장소 조건이면 장소 이름, detail: 실패 이유(못 찾은 이름·서버 오류) */
     class LeaveOutcome(val result: LeaveResult, val recipients: List<String> = emptyList(), val whenKey: String = "",
                        val place: String = "", val detail: String = "", val text: String = "", val group: String = "")
 
@@ -1075,7 +1075,7 @@ object Engine : CarSignals.Listener {
     private val LEAVE_WITH_PLACE = setOf("place", "park", "region")
     private const val LEAVE_TEXT_MAX = 300
 
-    /** "엄마", "엄마에게", "아버지님" → 모임 구성원. 이름 → 호칭 → 포함 순으로 찾고, 남긴 사람 자신은 뺀다. */
+    /** "엄마", "엄마에게", "아버지님" → 그룹 구성원. 이름 → 호칭 → 포함 순으로 찾고, 남긴 사람 자신은 뺀다. */
     private fun findMember(c: Circle, query: String, authorId: String): Member? {
         val q = query.trim().removeSuffix("에게").removeSuffix("한테").removeSuffix("께").removeSuffix("님").trim()
         if (q.isEmpty()) return null
@@ -1100,7 +1100,7 @@ object Engine : CarSignals.Listener {
         // Gleo가 운전자가 말하지 않았는데도 「저장한 곳에」(useSavedSpot)를 켜서 보낼 때가 있다 (11/10 로그).
         // 저장한 곳이 없으면 실패하지 않고 지금 자리에 남긴다.
         val useSpot = useSpot && store.spots.isNotEmpty()
-        // 받는 쪽은 그룹(모임) 단위: 「가족에게」면 가족 모임 모두, 「친구에게」면 친구 모임 모두
+        // 받는 쪽은 그룹(그룹) 단위: 「가족에게」면 가족 그룹 모두, 「친구에게」면 친구 그룹 모두
         // 저장한 곳에 남기면서 그룹을 말하지 않았으면, 저장할 때 고른 그룹으로 간다
         val spotGroup = if (useSpot && groupQuery.isBlank()) store.spots.lastOrNull()?.circleId?.let { circles[it] } else null
         val c = spotGroup ?: findGroup(groupQuery) ?: return done(LeaveOutcome(if (groupQuery.isBlank()) LeaveResult.NOT_READY else LeaveResult.NO_GROUP, detail = groupQuery.trim()))
@@ -1153,7 +1153,7 @@ object Engine : CarSignals.Listener {
         player.speak(text) {}
     }
 
-    /** 내가 남긴 안부 들어 보기 등 짧게 읽던 것을 멈춘다 (받은 안부 재생 중이면 건드리지 않는다) */
+    /** 내가 남긴 메시지 들어 보기 등 짧게 읽던 것을 멈춘다 (받은 메시지 재생 중이면 건드리지 않는다) */
     fun stopSpeaking() { if (playing == null) player.stop() }
 
     /** 말하고, 다 말한 뒤(또는 못 했으면 바로) then. 「녹음해 줘」에서 안내 → 삐 → 녹음 순서를 지키려고 쓴다 */
@@ -1162,7 +1162,7 @@ object Engine : CarSignals.Listener {
         player.speak(text) { then() }
     }
 
-    /** 다시 듣는 중인 안부인지 (「들었어요」를 또 보내지 않는다) */
+    /** 다시 듣는 중인 메시지인지 (「들었어요」를 또 보내지 않는다) */
     fun isReplay(m: PlaceMessage) = m.id in replayIds
 
     /** 지도·목록에서 고른 메시지 하나를 다시 듣는다 (「들었어요」는 또 보내지 않는다) */
@@ -1226,7 +1226,7 @@ object Engine : CarSignals.Listener {
             Notifier.playing(m, playState)
             changed()
             // 다시 듣기는 이미 알린 것이라 잠시 뒤 다음으로 넘어간다
-            // 기계음을 못 써 글로 보여 줄 때는 읽을 시간을 줘야 하니 넘어가지 않는다 (「다음 안부·나중에」를 누를 때까지)
+            // 기계음을 못 써 글로 보여 줄 때는 읽을 시간을 줘야 하니 넘어가지 않는다 (「다음 메시지·나중에」를 누를 때까지)
             // 모아 듣기 중이면 다음으로 넘어간다. 하나만 다시 들었으면 화면을 닫지 않고 「처음부터」로 다시 들을 수 있게 둔다.
             if (m.id in replayIds) {
                 if (ok && pending.any { it.id in replayIds }) main.postDelayed({ if (playing?.id == m.id) next(skip = false) }, REPLAY_GAP_MS)
@@ -1337,7 +1337,7 @@ object Engine : CarSignals.Listener {
         changed()
     }
 
-    /** 서버는 열쇠로 모임을 정하므로 주소에는 "me"를 쓴다 */
+    /** 서버는 열쇠로 그룹을 정하므로 주소에는 "me"를 쓴다 */
     private const val CIRCLE = "me"
     private const val REFRESH_MS = 30_000L
     private const val RETRY_MS = 5_000L
@@ -1348,7 +1348,7 @@ object Engine : CarSignals.Listener {
     private const val DEMO_HOME = "demo-home"
     private const val DEMO_FRIENDS = "demo-friends"
     private const val DEMO_COUPLE = "demo-couple"
-    private const val DEMO_OWNER = "wonwoo"
-    private const val DEMO_FRIEND_OWNER = "f_wonwoo"
-    private const val DEMO_COUPLE_OWNER = "c_wonwoo"
+    private const val DEMO_OWNER = "yongmin"
+    private const val DEMO_FRIEND_OWNER = "f_yongmin"
+    private const val DEMO_COUPLE_OWNER = "c_yongmin"
 }

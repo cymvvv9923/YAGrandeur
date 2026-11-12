@@ -30,9 +30,9 @@ data class PlaceMessage(
     val audioUrl: String?,
     /** 열리는 조건: "place" 장소 · "rain" 비 · "night" 밤길 · "together" 옆자리 동승 · "door" 차에 탈 때 */
     val opensOn: String = "place",
-    /** 어느 모임의 메시지인지 (한 차가 여러 모임에 들어갈 수 있다) */
+    /** 어느 그룹의 메시지인지 (한 차가 여러 그룹에 들어갈 수 있다) */
     val circleId: String = "",
-    /** 받는 사람 (비면 남긴 사람 말고 모임 모두) */
+    /** 받는 사람 (비면 남긴 사람 말고 그룹 모두) */
     val to: List<String> = emptyList(),
     /** 답장이면 원래 메시지 id */
     val replyTo: String? = null,
@@ -67,11 +67,11 @@ object Api {
     private val main = Handler(Looper.getMainLooper())
     private val base = BuildConfig.SERVER_URL
     /**
-     * 지금 관리하는 모임의 열쇠. 없으면 등록 전.
-     * 차는 모임마다 열쇠를 따로 받는다. 다른 모임의 일은 함수의 k에 그 모임 열쇠를 넘긴다.
+     * 지금 관리하는 그룹의 열쇠. 없으면 등록 전.
+     * 차는 그룹마다 열쇠를 따로 받는다. 다른 그룹의 일은 함수의 k에 그 그룹 열쇠를 넘긴다.
      */
     @Volatile var key: String? = null
-    /** 서버가 그 열쇠를 모른다고 할 때(401). 차를 모임에서 뺐거나 서버 데이터가 지워진 경우 */
+    /** 서버가 그 열쇠를 모른다고 할 때(401). 차를 그룹에서 뺐거나 서버 데이터가 지워진 경우 */
     var onUnauthorized: ((String) -> Unit)? = null
 
     /** 서버가 닿는지 (열쇠 없이) */
@@ -91,7 +91,7 @@ object Api {
         done(body?.let { parseMessages(JSONArray(it)) })
     }
 
-    // 모임 만들기·들어가기 (열쇠 없이) ----------------------------------------------
+    // 그룹 만들기·들어가기 (열쇠 없이) ----------------------------------------------
 
     /** 들어간 결과. memberId는 이 차의 주인 (초대로 들어가면 아직 없음) */
     data class Joined(val key: String, val circle: Circle, val memberId: String?, val carName: String)
@@ -108,7 +108,7 @@ object Api {
         call("POST", path, body.put("device", "car").put("vinHash", vinHash).put("agreed", true), keepError = true) { text ->
             val o = text?.let { runCatching { JSONObject(it) }.getOrNull() }
             if (o != null && o.has("key")) done(Joined(o.getString("key"), parseCircle(o.getJSONObject("circle")),
-                // 주인: 새 모임은 만든 사람, 내 코드로 들어오면 그 코드의 사람
+                // 주인: 새 그룹은 만든 사람, 내 코드로 들어오면 그 코드의 사람
                 o.optString("memberId").ifBlank { null } ?: o.optJSONObject("device")?.optString("ownerId")?.takeIf { it.isNotBlank() && it != "null" },
                 o.optJSONObject("device")?.optString("name").orEmpty()), null)
             else done(null, o?.optString("error")?.takeIf { it.isNotBlank() })
@@ -147,7 +147,7 @@ object Api {
     /** 이 차 연결 끊기 */
     fun unlinkCar(done: (Boolean) -> Unit) = call("POST", "/api/devices/me/delete", JSONObject()) { done(it != null) }
 
-    // 모임의 차 관리 (폰 웹의 「차 관리」와 같은 일을 차 화면에서) -------------------------
+    // 그룹의 차 관리 (폰 웹의 「차 관리」와 같은 일을 차 화면에서) -------------------------
 
     /** me: 이 차인지 */
     data class Car(val id: String, val name: String, val ownerId: String?, val me: Boolean)
@@ -167,7 +167,7 @@ object Api {
     fun removeCar(carId: String, done: (Boolean) -> Unit) =
         call("POST", "/api/devices/$carId/delete", JSONObject()) { done(it != null) }
 
-    /** 모임 통째로 지우기. 서버는 확인용으로 모임 이름을 그대로 받는다. 실패하면 오류 문구 */
+    /** 그룹 통째로 지우기. 서버는 확인용으로 그룹 이름을 그대로 받는다. 실패하면 오류 문구 */
     fun deleteCircle(name: String, done: (String?) -> Unit) =
         call("POST", "/api/circles/me/delete", JSONObject().put("confirm", name), keepError = true) { text ->
             val o = text?.let { runCatching { JSONObject(it) }.getOrNull() }

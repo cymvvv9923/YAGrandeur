@@ -30,7 +30,7 @@ import kotlin.math.sqrt
  */
 class MainActivity : Activity(), Engine.Ui {
 
-    /** HOME은 메인 지도. TODAY는 예전 홈(모임 얼굴 줄·모아 듣기·기다리는 메시지·소식 요약) */
+    /** HOME은 메인 지도. TODAY는 예전 홈(그룹 얼굴 줄·모아 듣기·기다리는 메시지·소식 요약) */
     private enum class Screen { HOME, TODAY, PLAY, SETTINGS, MEMBERS, LEAVE, FEED, DEMO, GROUPS }
 
     /** 메시지 남기기 화면에서 고르는 값 */
@@ -42,7 +42,7 @@ class MainActivity : Activity(), Engine.Ui {
     private var leaveRadius = 500
     /** 언제 열릴지: place 장소 · rain 비 · night 밤길 · together 옆자리 · door 차에 탈 때 */
     private var leaveWhen = "place"
-    /** 받는 사람 (비면 모임 모두) */
+    /** 받는 사람 (비면 그룹 모두) */
     private var leaveTo: List<String> = emptyList()
     /** 답장이면 원래 메시지 */
     private var leaveReplyTo: PlaceMessage? = null
@@ -95,24 +95,24 @@ class MainActivity : Activity(), Engine.Ui {
     private var mainMap: org.maplibre.android.maps.MapView? = null
     private var mainLib: org.maplibre.android.maps.MapLibreMap? = null
     private var mainStyle: org.maplibre.android.maps.Style? = null
-    /** 메인 지도 오른쪽 칸 (기다리는 메시지 · 고른 지역 · 상황별 안부 · 보기) */
+    /** 메인 지도 오른쪽 칸 (기다리는 메시지 · 고른 지역 · 상황별 메시지 · 보기) */
     private var mainSide: LinearLayout? = null
     /** 지도 단계: 0 시·도 · 1 시·군·구 · 2 실제 자리 */
     private var mapLevel = -1
     private var mapLevelView: TextView? = null
-    /** 지역 말풍선을 눌러 고른 지역. 오른쪽 칸 위에 그 지역 안부를 보여 준다. */
+    /** 지역 말풍선을 눌러 고른 지역. 오른쪽 칸 위에 그 지역 메시지를 보여 준다. */
     private var selRegion: Regions.Region? = null
-    /** 지도·목록에서 고른 안부 하나 */
+    /** 지도·목록에서 고른 메시지 하나 */
     private var selMessage: PlaceMessage? = null
-    /** 상황별 안부에서 펼친 조건 */
+    /** 상황별 메시지에서 펼친 조건 */
     private var openCondition: String? = null
     /** 정차 중 메인을 하늘 배경·유리 지도(시안 5안)로 그린다 */
     private val SKY_HOME = true
     /** 메인 외 화면의 하늘 바탕 위 막 (메인은 투명) */
     private var skyVeil: View? = null
-    /** 상황별 안부 칸 전체를 펼쳤는지 (처음엔 한 줄 요약만) */
+    /** 상황별 메시지 칸 전체를 펼쳤는지 (처음엔 한 줄 요약만) */
     private var conditionsExpanded = false
-    /** 들은 안부: 고른 칸 (all 전체 · cond 상황별 · place 장소) · 다 펼쳤는지 */
+    /** 들은 메시지: 고른 칸 (all 전체 · cond 상황별 · place 장소) · 다 펼쳤는지 */
     private var heardTab = "all"
     private var heardMore = false
     /** 지도 그림을 다시 그려야 하는지 가리는 값 (데이터가 그대로면 다시 그리지 않는다) */
@@ -121,9 +121,9 @@ class MainActivity : Activity(), Engine.Ui {
     private val regionCache = HashMap<String, Pair<Regions.Region?, Regions.Region?>>()
     /** 주행 중 저장한 곳에서 시작한 남기기 (남기면 그 자리를 목록에서 지운다) */
     private var leaveSpotId: String? = null
-    /** 남기기에서 고른 모임 (여러 모임에 들어가 있을 때). null이면 지금 관리하는 모임 */
+    /** 남기기에서 고른 그룹 (여러 그룹에 들어가 있을 때). null이면 지금 관리하는 그룹 */
     private var leaveCircleId: String? = null
-    /** 모임 관리 화면의 차 목록 (화면을 열 때 받는다). null이면 받는 중 */
+    /** 그룹 관리 화면의 차 목록 (화면을 열 때 받는다). null이면 받는 중 */
     private var cars: List<Api.Car>? = null
 
     // 상태는 모두 Engine(백그라운드 서비스)에 있다
@@ -148,7 +148,7 @@ class MainActivity : Activity(), Engine.Ui {
         Engine.start(this)
         AnbuService.start(this)
         Engine.ui = this
-        // 알림·위치 권한 (위치는 근처 안부 판단에만 쓰고 서버로 보내지 않는다)
+        // 알림·위치 권한 (위치는 근처 메시지 판단에만 쓰고 서버로 보내지 않는다)
         val need = listOfNotNull(
             android.Manifest.permission.POST_NOTIFICATIONS.takeIf { Build.VERSION.SDK_INT >= 33 && checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED },
             android.Manifest.permission.ACCESS_FINE_LOCATION.takeIf { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED },
@@ -256,7 +256,7 @@ class MainActivity : Activity(), Engine.Ui {
             Engine.setDriver(it)
         }
         // 시연용: adb shell am start -n ai.gilwi.anbu/.MainActivity --es invite demo-home --es member hyeonggyu
-        // 이미 다른 모임에 있으면 --ez add true 일 때만 하나 더 들어간다
+        // 이미 다른 그룹에 있으면 --ez add true 일 때만 하나 더 들어간다
         intent.getStringExtra("invite")?.takeIf { Engine.needPairing || intent.getBooleanExtra("add", false) }?.let { code ->
             val member = intent.getStringExtra("member")
             Engine.joinCircle(code) { err ->
@@ -383,7 +383,7 @@ class MainActivity : Activity(), Engine.Ui {
         if (screen != Screen.HOME && !(SKY_SKIN && railShown && tabScreen)) root.addView(navBar(withHome = !railShown))
         when (screen) {
             Screen.HOME -> renderHome()
-            Screen.TODAY -> renderHome() // 「오늘」은 메인(오늘 온 안부)과 소식(발견한 안부)으로 나눴다
+            Screen.TODAY -> renderHome() // 「오늘」은 메인(오늘 온 메시지)과 소식(발견한 메시지)으로 나눴다
             Screen.PLAY -> renderPlay()
             Screen.SETTINGS -> renderSettings()
             Screen.MEMBERS -> renderMembers()
@@ -464,7 +464,7 @@ class MainActivity : Activity(), Engine.Ui {
         val show = parked == true && screen != Screen.PLAY
         rail.visibility = if (show) View.VISIBLE else View.GONE
         if (!show) return false
-        // 예전 모임 관리 화면은 그룹 메뉴에 속한다
+        // 예전 그룹 관리 화면은 그룹 메뉴에 속한다
         val current = if (screen == Screen.MEMBERS) Screen.GROUPS else screen
         (if (BuildConfig.STANDALONE) RAIL.dropLast(1) + DEMO_RAIL + RAIL.last() else RAIL).forEach { (s, icon, name) ->
             if (s == Screen.SETTINGS) rail.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f)) // 설정은 맨 아래
@@ -520,8 +520,8 @@ class MainActivity : Activity(), Engine.Ui {
 
     /**
      * 오늘. 정차 중에는 화면 높이를 꽉 채운다.
-     *   왼쪽: 모임 얼굴 줄 → 오늘 온 메시지 모아 듣기 → 기다리는 메시지
-     *   오른쪽: 발견 지도 요약 → 모임 소식(남은 높이)
+     *   왼쪽: 그룹 얼굴 줄 → 오늘 온 메시지 모아 듣기 → 기다리는 메시지
+     *   오른쪽: 발견 지도 요약 → 그룹 소식(남은 높이)
      * 운전 중에는 만질 것 없이 지금 상태 한 문장만 크게.
      */
     private fun renderToday() {
@@ -531,7 +531,7 @@ class MainActivity : Activity(), Engine.Ui {
 
         root.addView(greeting())
         root.addView(space(16))
-        // 가족 얼굴 줄은 두지 않는다 (얻는 정보가 없고, 모임이 여럿일 수 있다). 오늘 들을 것 → 지도 → 모임 소식 순서.
+        // 가족 얼굴 줄은 두지 않는다 (얻는 정보가 없고, 그룹이 여럿일 수 있다). 오늘 들을 것 → 지도 → 그룹 소식 순서.
         val left = column().apply {
             addView(inboxCard(), panelParams())
             addView(waitingPanel(), panelParams())
@@ -564,7 +564,7 @@ class MainActivity : Activity(), Engine.Ui {
     private fun greeting() = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.BOTTOM
-        // 가족이면 호칭으로("아버지"), 친구·연인 모임의 호칭(친구·자기)은 인사로 어색해서 이름으로
+        // 가족이면 호칭으로("아버지"), 친구·연인 그룹의 호칭(친구·자기)은 인사로 어색해서 이름으로
         val driver = circle?.member(store.driverId)?.let { if (it.title.isNotBlank() && circle?.type == "family") it.title else "${it.name}님" }
         val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
         val hello = when (hour) { in 5..10 -> "좋은 아침이에요"; in 11..16 -> "좋은 오후예요"; in 17..21 -> "좋은 저녁이에요"; else -> "오늘도 수고 많았어요" }
@@ -668,7 +668,7 @@ class MainActivity : Activity(), Engine.Ui {
     /** 가장 가까운 메시지 장소 한 줄 (홈용으로 짧게) */
     private fun nearestShort(): String? {
         val loc = lastLoc ?: return null
-        // 이미 들은 곳은 빼고 아직 못 찾은 안부 중에서
+        // 이미 들은 곳은 빼고 아직 못 찾은 메시지 중에서
         val found = foundIds()
         val near = messages.filter { it.isPlace && !isMine(it) && it.id !in found }
             .minByOrNull { distanceM(loc.first, loc.second, it.lat, it.lon) } ?: return null
@@ -676,7 +676,7 @@ class MainActivity : Activity(), Engine.Ui {
         return "근처 메시지 · ${near.placeName} ${if (d < 1000) "${d.toInt()}m" else "%.1fkm".format(d / 1000)}"
     }
 
-    /** 발견 지도 요약: 모임 사람들이 남긴 메시지 중 몇 개를 찾았는지. 누르면 지도. */
+    /** 발견 지도 요약: 그룹 사람들이 남긴 메시지 중 몇 개를 찾았는지. 누르면 지도. */
     private fun mapCard() = panel().apply {
         val (found, total) = discoveryCount()
         addView(label("발견 지도"))
@@ -703,14 +703,14 @@ class MainActivity : Activity(), Engine.Ui {
         layoutParams = LinearLayout.LayoutParams(-1, dp(14)).apply { topMargin = dp(8); bottomMargin = dp(8) }
     }
 
-    /** 내가 들은 메시지 (다른 차에서 들은 것까지, 모든 모임에서) */
+    /** 내가 들은 메시지 (다른 차에서 들은 것까지, 모든 그룹에서) */
     private fun foundIds(): Set<String> {
         val owners = store.memberships.mapNotNull { it.ownerId }.toSet()
         return (feedHeard.filter { it.memberId in owners }.map { it.messageId } + store.heard.map { it.messageId }).toSet()
     }
-    /** 이 차 주인이 남긴 메시지인지 (그 메시지 모임에서의 주인으로 본다) */
+    /** 이 차 주인이 남긴 메시지인지 (그 메시지 그룹에서의 주인으로 본다) */
     private fun isMine(m: PlaceMessage) = m.authorId == Engine.ownerOf(m)
-    /** (찾은 수, 모임 사람들이 나에게 남긴 수) */
+    /** (찾은 수, 그룹 사람들이 나에게 남긴 수) */
     private fun discoveryCount(): Pair<Int, Int> {
         val others = messages.filter { !isMine(it) && (it.to.isEmpty() || Engine.ownerOf(it) in it.to) && (viewCircle == null || it.circleId == viewCircle) }
         val ids = foundIds()
@@ -721,7 +721,7 @@ class MainActivity : Activity(), Engine.Ui {
     /** 사람별 요약 한 줄 (소식 카드·소식 화면) */
     private data class Person(val member: Member, val todayCount: Int, val line: String, val whenText: String, val key: String, val recent: List<Api.Heard>, val diary: Api.Diary?)
 
-    /** cc: 사람을 보여 줄 모임. 소식(들은 기록·일기)은 관리 중인 모임 것만 받아 두므로, 다른 모임이면 사람만 보인다 */
+    /** cc: 사람을 보여 줄 그룹. 소식(들은 기록·일기)은 관리 중인 그룹 것만 받아 두므로, 다른 그룹이면 사람만 보인다 */
     private fun people(cc: Circle? = circle): List<Person> {
         val c = cc ?: return emptyList()
         val active = c.id == circle?.id
@@ -748,9 +748,9 @@ class MainActivity : Activity(), Engine.Ui {
         java.time.Instant.parse(iso).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toString()
     }.getOrNull()
 
-    /** 모임 소식: 로그를 늘어놓지 않고 사람마다 한 줄 */
+    /** 그룹 소식: 로그를 늘어놓지 않고 사람마다 한 줄 */
     private fun feedCard() = panel().apply {
-        addView(label("모임 소식"))
+        addView(label("그룹 소식"))
         val list = people().filter { it.key.isNotEmpty() }
         if (list.isEmpty()) { addView(space(12)); addView(text("아직 소식이 없어요", 26f, MUTED)); return@apply }
         list.take(5).forEachIndexed { i, p ->
@@ -842,8 +842,8 @@ class MainActivity : Activity(), Engine.Ui {
     }
 
     /**
-     * 처음 화면: 이 차가 아직 모임에 들어가지 않았을 때 (처음 켠 차, 또는 이 차를 모임에서 뺐을 때).
-     * 로그인 없이 「새 모임 만들기」 또는 「초대 코드로 들어가기」. 들어가기 전에는 다른 화면을 열지 않는다.
+     * 처음 화면: 이 차가 아직 그룹에 들어가지 않았을 때 (처음 켠 차, 또는 이 차를 그룹에서 뺐을 때).
+     * 로그인 없이 「새 그룹 만들기」 또는 「초대 코드로 들어가기」. 들어가기 전에는 다른 화면을 열지 않는다.
      */
     private fun renderPair() {
         root.addView(space(24))
@@ -854,9 +854,9 @@ class MainActivity : Activity(), Engine.Ui {
         val busy = Engine.setupBusy
         root.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            addView(optionTile(R.drawable.ic_people, "새 모임 만들기", "처음이면 여기서 만들고, 초대 코드를 알려 주세요", false) { if (!busy) startCreate() },
+            addView(optionTile(R.drawable.ic_people, "새 그룹 만들기", "처음이면 여기서 만들고, 초대 코드를 알려 주세요", false) { if (!busy) startCreate() },
                 LinearLayout.LayoutParams(0, -2, 1f))
-            addView(optionTile(R.drawable.ic_message, "초대 코드로 들어가기", "모임 사람에게 받은 6자리 코드를 넣어요", false) { if (!busy) startJoin() },
+            addView(optionTile(R.drawable.ic_message, "초대 코드로 들어가기", "그룹 사람에게 받은 6자리 코드를 넣어요", false) { if (!busy) startJoin() },
                 LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(20) })
             alpha = if (busy) 0.4f else 1f
         })
@@ -888,14 +888,14 @@ class MainActivity : Activity(), Engine.Ui {
     }
 
     /**
-     * 새 모임: 종류 → 모임 이름 → 내 이름 → 호칭 → 얼굴 색 → 개인정보 동의. 만든 사람이 이 차의 주인이 된다.
-     * 폰 웹의 「새 모임 만들기」와 같은 내용을 차 화면에서 다 넣는다.
+     * 새 그룹: 종류 → 그룹 이름 → 내 이름 → 호칭 → 얼굴 색 → 개인정보 동의. 만든 사람이 이 차의 주인이 된다.
+     * 폰 웹의 「새 그룹 만들기」와 같은 내용을 차 화면에서 다 넣는다.
      */
     private fun startCreate() {
         if (parked != true) return
-        pickFrom("어떤 모임인가요?", CIRCLE_TYPES.map { it.second }) { i ->
+        pickFrom("어떤 그룹인가요?", CIRCLE_TYPES.map { it.second }) { i ->
             val type = CIRCLE_TYPES[i].first
-            askText("모임 이름", if (type == "family") "우리집" else "우리 모임", suggestions = CIRCLE_NAME_HINTS.getValue(type)) { circleName ->
+            askText("그룹 이름", if (type == "family") "우리집" else "우리 그룹", suggestions = CIRCLE_NAME_HINTS.getValue(type)) { circleName ->
                 askText("내 이름 (이 차의 주인)", "") { myName ->
                     askText("$myName 님의 호칭 (선택)", "", suggestions = TITLE_HINTS.getValue(type), allowBlank = true, okLabel = "다음", skipLabel = "건너뛰기") { title ->
                         pickColor("$myName 님의 얼굴 색", "blue") { color ->
@@ -912,10 +912,10 @@ class MainActivity : Activity(), Engine.Ui {
         }
     }
 
-    /** 초대 코드로 들어가기: 모임 사람에게 받은 「내 코드」를 넣으면 바로 내 차로 들어온다 (주인을 고르지 않는다) */
-    private fun startJoin() = askText("내 코드 (모임 사람에게 받은 6자리)", "") { code ->
+    /** 초대 코드로 들어가기: 그룹 사람에게 받은 「내 코드」를 넣으면 바로 내 차로 들어온다 (주인을 고르지 않는다) */
+    private fun startJoin() = askText("내 코드 (그룹 사람에게 받은 6자리)", "") { code ->
         showPrivacy("동의하고 들어가기") {
-            // 다른 사람이 타면 앞 사람 시연 안내(「○○의 안부가 열렸어요」)도 걷는다
+            // 다른 사람이 타면 앞 사람 시연 안내(「○○의 메시지가 열렸어요」)도 걷는다
             stopScenario(silent = true)
             Engine.joinCircle(code) { err ->
                 if (err != null) toast(err) else toast("「${circle?.name}」에 ${store.driverId?.let { circle?.nameOf(it) }?.let { "${it}님 차로 " } ?: ""}들어왔어요")
@@ -939,7 +939,7 @@ class MainActivity : Activity(), Engine.Ui {
             loadUrl(if (BuildConfig.STANDALONE) "file:///android_asset/privacy.html" else BuildConfig.SERVER_URL + "/privacy.html")
         }
         AlertDialog.Builder(this, dialogTheme())
-            .setTitle(if (okLabel != null) "이름·메시지·목소리를 모임 사람들과 나눠요" else "개인정보 처리방침")
+            .setTitle(if (okLabel != null) "이름·메시지·목소리를 그룹 사람들과 나눠요" else "개인정보 처리방침")
             // 대화창은 바로 넣은 뷰의 높이를 무시하고 늘려서 버튼이 밀려난다. 높이를 정한 상자에 넣는다.
             .setView(column().apply { addView(web, LinearLayout.LayoutParams(-1, dp(440))) })
             .apply { if (okLabel != null) setPositiveButton(okLabel) { _, _ -> onAgree() } }
@@ -1017,7 +1017,7 @@ class MainActivity : Activity(), Engine.Ui {
 
     /**
      * 재생 화면. 화면 높이를 두 칸이 나눠 갖는다.
-     *   왼쪽 「누가·어디서」: 큰 얼굴 · 이름 · 모임 · 어디에 남긴 안부인지 · (글이면 글) · 들러 가기 · 신고
+     *   왼쪽 「누가·어디서」: 큰 얼굴 · 이름 · 그룹 · 어디에 남긴 메시지인지 · (글이면 글) · 들러 가기 · 신고
      *   오른쪽 「듣기」: 큰 재생 버튼과 5초 앞뒤 · 막대 · 「들었어요」 · 처음부터 · 나중에
      */
     private fun renderPlay() {
@@ -1033,8 +1033,8 @@ class MainActivity : Activity(), Engine.Ui {
             addView(text(playState, 22f, MUTED).also { playStateView = it }, LinearLayout.LayoutParams(0, -2, 1f))
             addView(text(when {
                 replay -> "다시 듣기 · 이미 「들었어요」를 보냈어요"
-                pending.isNotEmpty() -> "다음 안부 ${pending.size}개가 기다려요"
-                else -> "오늘 받은 안부"
+                pending.isNotEmpty() -> "다음 메시지 ${pending.size}개가 기다려요"
+                else -> "오늘 받은 메시지"
             }, 20f, ACCENT, weight = 600).apply {
                 background = GradientDrawable().apply { setColor(CHIP); cornerRadius = dp(40).toFloat() }
                 setPadding(dp(20), dp(8), dp(20), dp(8))
@@ -1075,9 +1075,9 @@ class MainActivity : Activity(), Engine.Ui {
                         addView(text(if (m.isPlace) "이 근처를 지나서 열렸어요" else WHEN_HINTS[m.opensOn] ?: "", 21f, MUTED))
                     })
                 }, LinearLayout.LayoutParams(-1, -2))
-                // 답장이면 무엇에 대한 답장인지 (내가 남긴 안부의 글, 목소리면 받아 적은 글)
+                // 답장이면 무엇에 대한 답장인지 (내가 남긴 메시지의 글, 목소리면 받아 적은 글)
                 m.replyTo?.let { rid -> messages.firstOrNull { it.id == rid } }?.let { orig ->
-                    val what = orig.text.takeIf { it.isNotBlank() }?.let { "「${it.take(16)}${if (it.length > 16) "…" else ""}」" } ?: if (orig.kind == "voice") "목소리 안부" else "안부"
+                    val what = orig.text.takeIf { it.isNotBlank() }?.let { "「${it.take(16)}${if (it.length > 16) "…" else ""}」" } ?: if (orig.kind == "voice") "목소리 메시지" else "메시지"
                     addView(text("↩ ${if (isMine(orig)) "내가 남긴" else "${orig.authorName}님의"} ${what}에 대한 답장", 21f, ACCENT, weight = 600).apply {
                         setPadding(dp(4), dp(14), 0, 0); maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
                     })
@@ -1132,7 +1132,7 @@ class MainActivity : Activity(), Engine.Ui {
                 orientation = LinearLayout.HORIZONTAL
                 addView(if (Engine.autoHeardLeft > 0) secondary("보내지 않기") { Engine.cancelAutoHeard() }
                     else secondary("처음부터") { Engine.playCurrent() }, LinearLayout.LayoutParams(0, dp(92), 1f).apply { marginEnd = dp(14) })
-                addView(secondary(if (pending.isEmpty()) "나중에 듣기" else "다음 안부") {
+                addView(secondary(if (pending.isEmpty()) "나중에 듣기" else "다음 메시지") {
                     if (pending.isEmpty()) Engine.later() else Engine.next()
                 }, LinearLayout.LayoutParams(0, dp(92), 1f))
             })
@@ -1261,9 +1261,9 @@ class MainActivity : Activity(), Engine.Ui {
     }
 
     /**
-     * 메인: 안부 지도. 멀리 보면 시·도, 조금 가까이 보면 시·군·구로 묶어 「서울 3/25」(찾은 수/전체) 말풍선을 띄우고,
-     * 더 가까이 가면 찾은 안부는 그 자리에 얼굴 말풍선, 못 찾은 안부는 「이 근처 어딘가 ?」 흐린 동그라미로 보인다.
-     * 오른쪽 칸: 기다리는 메시지 → (고른 안부) → (고른 지역의 안부) → 상황별 안부(비·밤길…) → 보기(모임·사람 고르기).
+     * 메인: 메시지 지도. 멀리 보면 시·도, 조금 가까이 보면 시·군·구로 묶어 「서울 3/25」(찾은 수/전체) 말풍선을 띄우고,
+     * 더 가까이 가면 찾은 메시지는 그 자리에 얼굴 말풍선, 못 찾은 메시지는 「이 근처 어딘가 ?」 흐린 동그라미로 보인다.
+     * 오른쪽 칸: 기다리는 메시지 → (고른 메시지) → (고른 지역의 메시지) → 상황별 메시지(비·밤길…) → 보기(그룹·사람 고르기).
      * 계산은 모두 차 안에서 한다. 운전 중에는 지도 대신 지금 상태 한 줄만.
      */
     private fun renderHome() {
@@ -1295,7 +1295,7 @@ class MainActivity : Activity(), Engine.Ui {
             orientation = LinearLayout.HORIZONTAL
             addView(column().apply {
                 addView(mapBox, LinearLayout.LayoutParams(-1, 0, 1f))
-                addView(text("얼굴 말풍선 = 찾은 안부 · ? = 아직 못 찾은 안부(이 근처 어딘가) · 「나」 = 내가 남긴 곳 · 길게 누르면 여기에 메시지 남기기", 18f, MUTED).apply { setPadding(0, dp(8), 0, 0) })
+                addView(text("얼굴 말풍선 = 찾은 메시지 · ? = 아직 못 찾은 메시지(이 근처 어딘가) · 「나」 = 내가 남긴 곳 · 길게 누르면 여기에 메시지 남기기", 18f, MUTED).apply { setPadding(0, dp(8), 0, 0) })
                 addView(text("지도 © OpenStreetMap 기여자 · OpenFreeMap · MapLibre · 행정구역 경계 © 통계청(KOSTAT) 2013", 16f, MUTED))
             }, LinearLayout.LayoutParams(0, -1, 3f))
             addView(ScrollView(context).apply { addView(side) }, LinearLayout.LayoutParams(0, -1, 2f).apply { marginStart = dp(16) })
@@ -1393,9 +1393,9 @@ class MainActivity : Activity(), Engine.Ui {
         content.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             addView(column().apply {
-                // 차 이름: 레일과 같은 선 아이콘 + 지금 상태, 작은 유리 캡슐 · 그 옆에 모임 고르기
+                // 차 이름: 레일과 같은 선 아이콘 + 지금 상태, 작은 유리 캡슐 · 그 옆에 그룹 고르기
                 val capRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-                // 모임이 셋이면 오른쪽 안내 칸에 닿을 수 있어 옆으로 밀어 볼 수 있게 둔다
+                // 그룹이 셋이면 오른쪽 안내 칸에 닿을 수 있어 옆으로 밀어 볼 수 있게 둔다
                 addView(android.widget.HorizontalScrollView(context).apply { isHorizontalScrollBarEnabled = false; addView(capRow) }, LinearLayout.LayoutParams(-1, -2))
                 capRow.addView(LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
@@ -1406,11 +1406,11 @@ class MainActivity : Activity(), Engine.Ui {
                         LinearLayout.LayoutParams(pxu(4), pxu(4)).apply { marginStart = pxu(10); marginEnd = pxu(10) })
                     addView(skyText("주차 중", 17f, skySub, 500))
                 }, LinearLayout.LayoutParams(-2, -2))
-                // 모임 고르기. 바꾸면 refreshSky가 다시 그린다
+                // 그룹 고르기. 바꾸면 refreshSky가 다시 그린다
                 skySwitchBox = android.widget.FrameLayout(context)
                 capRow.addView(skySwitchBox, LinearLayout.LayoutParams(-2, -2).apply { marginStart = pxu(12) })
                 addView(title, LinearLayout.LayoutParams(-2, -2).apply { topMargin = pxu(14) })
-                addView(skyText("지역을 누르면 그곳에 남겨 둔 안부가 보여요", 20f, skySub), LinearLayout.LayoutParams(-2, -2).apply { topMargin = pxu(6) })
+                addView(skyText("지역을 누르면 그곳에 남겨 둔 메시지가 보여요", 20f, skySub), LinearLayout.LayoutParams(-2, -2).apply { topMargin = pxu(6) })
             }, LinearLayout.LayoutParams(0, -2, 1f))
             // 오른쪽: 내 위치로 · 그 아래 말로 남기는 법 (늘 떠 있다)
             addView(column().apply {
@@ -1481,19 +1481,19 @@ class MainActivity : Activity(), Engine.Ui {
         val hereSub = skyText("", 12.5f, skySub)
         mapBox.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            // 지금 여기 · 가장 가까운 안부: 지도를 덜 가리게 작게
+            // 지금 여기 · 가장 가까운 메시지: 지도를 덜 가리게 작게
             background = pressable(glass(18, 0.9f)); setPadding(pxu(8), pxu(7), pxu(14), pxu(7))
             addView(art(R.drawable.ic3_pin, 30), LinearLayout.LayoutParams(pxu(30), pxu(30)).apply { marginEnd = pxu(7) })
             addView(column().apply { addView(hereName); addView(hereSub, LinearLayout.LayoutParams(-2, -2).apply { topMargin = pxu(2) }) })
             isClickable = true; setOnClickListener { skyGoHere() }
             skyShadow(this, 6)
         }, android.widget.FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { topMargin = pxu(4) })
-        // 이번 주 들은 안부: 지도를 가리지 않게 한 줄짜리 작은 알약
+        // 이번 주 들은 메시지: 지도를 가리지 않게 한 줄짜리 작은 알약
         val weekNum = skyText("", 20f, skyInk, 800)
         mapBox.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             background = glass(20, 0.9f); setPadding(pxu(16), pxu(8), pxu(18), pxu(8))
-            addView(skyText("이번 주 들은 안부", 14f, skySub, 600).apply { isSingleLine = true }, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = pxu(8) })
+            addView(skyText("이번 주 들은 메시지", 14f, skySub, 600).apply { isSingleLine = true }, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = pxu(8) })
             addView(weekNum)
             skyShadow(this, 4)
         }, android.widget.FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply { bottomMargin = pxu(4) })
@@ -1699,7 +1699,7 @@ class MainActivity : Activity(), Engine.Ui {
             }, LinearLayout.LayoutParams(pxu(52), pxu(52)).apply { marginEnd = pxu(12) })
             addView(column().apply {
                 addView(skyText(r.name, 19f, skyInk, 700))
-                addView(skyText(if (left > 0) "못 들은 안부 ${left}개 ›" else "안부 ${st.total}개 모두 들음 ›", 15f, skyBlue, 600),
+                addView(skyText(if (left > 0) "못 들은 메시지 ${left}개 ›" else "메시지 ${st.total}개 모두 들음 ›", 15f, skyBlue, 600),
                     LinearLayout.LayoutParams(-2, -2).apply { topMargin = pxu(2) })
             })
             isClickable = true; setOnClickListener { skySelect(g) }
@@ -1715,12 +1715,12 @@ class MainActivity : Activity(), Engine.Ui {
         val ids = foundIds()
         val vis = visibleMessages().filter { !isMine(it) }
         val unheard = vis.count { it.id !in ids }
-        val head = "못 들은 안부 "
+        val head = "못 들은 메시지 "
         v.title.text = android.text.SpannableString("$head${unheard}개").apply {
             setSpan(android.text.style.ForegroundColorSpan(skyBlue), head.length, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
 
-        // 칩과 지도: 장소 안부가 있는 권역만
+        // 칩과 지도: 장소 메시지가 있는 권역만
         val stats = regionStats(0)
         val gStats = skyGroups.mapNotNull { g ->
             val ss = stats.filterKeys { it.code in g.codes }.values
@@ -1730,13 +1730,13 @@ class MainActivity : Activity(), Engine.Ui {
         v.chips.removeAllViews()
         v.chips.addView(skyChip("전체", selKey == null) { skyBack() }, LinearLayout.LayoutParams(-2, pxu(48)))
         gStats.forEach { (g, _, _) -> v.chips.addView(skyChip(g.name, selKey == g.key) { skySelect(g) }, LinearLayout.LayoutParams(-2, pxu(48)).apply { marginStart = pxu(8) }) }
-        // 못 들은 안부가 가장 많은 권역을 1로: 밤엔 불빛, 낮엔 색 진하기
+        // 못 들은 메시지가 가장 많은 권역을 1로: 밤엔 불빛, 낮엔 색 진하기
         val maxLeft = gStats.maxOfOrNull { it.third - it.second }?.coerceAtLeast(1) ?: 1
         val placed = vis.filter { it.isPlace && it.hasPlace }
         v.map.marks = gStats.mapIndexed { i, (g, fnd, tot) ->
             val tone = skyTones[i % skyTones.size]
             val level = (tot - fnd).toFloat() / maxLeft
-            // 점(알약 자리)은 권역 대표 위치가 아니라 그 권역의 실제 안부 자리에: 안부들 가운데에 가장 가까운 안부
+            // 점(알약 자리)은 권역 대표 위치가 아니라 그 권역의 실제 메시지 자리에: 메시지들 가운데에 가장 가까운 메시지
             val inG = placed.filter { m -> regionsOf(m).first?.code?.let { it in g.codes } == true }
                 .let { l -> l.filter { it.id !in ids }.ifEmpty { l } }
             val anchor = if (inG.isEmpty()) g.lat to g.lon else {
@@ -1745,7 +1745,7 @@ class MainActivity : Activity(), Engine.Ui {
             }
             GlassMap.Mark(g.key, g.codes, anchor.first, anchor.second, tone.top, tone.bottom, tone.glow, skyRegionPill(g, fnd, tot, tone, selKey == g.key), level)
         }
-        // 밤 불빛은 안부가 남겨진 자리에서만 (못 들은 것은 밝게, 들은 것은 은은하게)
+        // 밤 불빛은 메시지가 남겨진 자리에서만 (못 들은 것은 밝게, 들은 것은 은은하게)
         v.map.lights = placed.map { Triple(it.lat, it.lon, it.id !in ids) }
         v.map.selected = selKey
         v.map.here = lastLoc
@@ -1760,12 +1760,12 @@ class MainActivity : Activity(), Engine.Ui {
         }
         val near = loc?.takeIf { inKorea }?.let { l -> vis.filter { it.isPlace && it.id !in ids }.minOfOrNull { distanceM(l.first, l.second, it.lat, it.lon) } }
         v.hereSub.text = when {
-            near == null -> if (loc != null && !inKorea) "가까운 안부를 찾지 못했어요" else "근처에 남은 안부가 없어요"
-            near < 1000 -> "가장 가까운 안부까지 ${near.toInt()}m"
-            else -> "가장 가까운 안부까지 ${"%.0f".format(near / 1000)}km"
+            near == null -> if (loc != null && !inKorea) "가까운 메시지를 찾지 못했어요" else "근처에 남은 메시지가 없어요"
+            near < 1000 -> "가장 가까운 메시지까지 ${near.toInt()}m"
+            else -> "가장 가까운 메시지까지 ${"%.0f".format(near / 1000)}km"
         }
 
-        // 이번 주 들은 안부 (이 차 주인 기준, 최근 7일)
+        // 이번 주 들은 메시지 (이 차 주인 기준, 최근 7일)
         val owners = store.memberships.mapNotNull { it.ownerId }.toSet()
         val today = java.time.LocalDate.now()
         val days = (6 downTo 0).map { today.minusDays(it.toLong()).toString() }
@@ -1777,14 +1777,14 @@ class MainActivity : Activity(), Engine.Ui {
         side.removeAllViews()
         selGroup?.let { g -> skyRegionSection(side, g, selRegion?.takeIf { it.code.length == 2 && it.code in g.codes }, vis, ids); skyDivider(side) }
         skyTodaySection(side)
-        // 주행 중 말로 남기기가 되어 「달리면서 저장한 곳」 대신 내가 남긴 안부를 보여 준다
+        // 주행 중 말로 남기기가 되어 「달리면서 저장한 곳」 대신 내가 남긴 메시지를 보여 준다
         skyMineSection(side); skyDivider(side)
 
         val whenName = WHEN_OPTIONS.toMap()
         val orderKeys = WHEN_OPTIONS.map { it.first }
         val waiting = vis.filter { !it.isPlace && it.id !in ids }.groupBy { it.opensOn }.entries.sortedBy { orderKeys.indexOf(it.key) }
-        skyHeader(side, "다음에 들을 안부", skyBlue, if (waiting.size > 3) (if (skyNextAll) "접기" else "전체 보기") else null) { skyNextAll = !skyNextAll; refreshSky() }
-        if (waiting.isEmpty()) side.addView(skyNote("기다리는 상황별 안부가 없어요"))
+        skyHeader(side, "다음에 들을 메시지", skyBlue, if (waiting.size > 3) (if (skyNextAll) "접기" else "전체 보기") else null) { skyNextAll = !skyNextAll; refreshSky() }
+        if (waiting.isEmpty()) side.addView(skyNote("기다리는 상황별 메시지가 없어요"))
         (if (skyNextAll) waiting else waiting.take(3)).forEach { (key, list) ->
             side.addView(LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
@@ -1796,7 +1796,7 @@ class MainActivity : Activity(), Engine.Ui {
                 addView(column().apply {
                     addView(skyText(whenName[key] ?: key, 16.5f, skyInk, 700))
                     // 설명 · 그룹을 한 줄로 (넘치면 말줄임)
-                    addView(skyText((WHEN_HINTS[key] ?: "") + " · " + list.map { Engine.circles[it.circleId]?.name ?: "모임" }.distinct().joinToString(", "), 13f, skySub).apply {
+                    addView(skyText((WHEN_HINTS[key] ?: "") + " · " + list.map { Engine.circles[it.circleId]?.name ?: "그룹" }.distinct().joinToString(", "), 13f, skySub).apply {
                         maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = pxu(2) })
                 }, LinearLayout.LayoutParams(0, -2, 1f))
                 addView(skyText("${list.size}개", 13.5f, skyBlue, 700).apply {
@@ -1808,14 +1808,14 @@ class MainActivity : Activity(), Engine.Ui {
         skyDivider(side)
 
         val heard = vis.filter { it.id in ids }.sortedByDescending { m -> feedHeard.filter { it.messageId == m.id }.maxOfOrNull { it.at } ?: "" }
-        skyHeader(side, "들은 안부", Color.parseColor("#A98BFA"), if (heard.size > 3) (if (skyHeardAll) "접기" else "더 보기") else null) { skyHeardAll = !skyHeardAll; refreshSky() }
-        if (heard.isEmpty()) side.addView(skyNote("아직 들은 안부가 없어요"))
+        skyHeader(side, "들은 메시지", Color.parseColor("#A98BFA"), if (heard.size > 3) (if (skyHeardAll) "접기" else "더 보기") else null) { skyHeardAll = !skyHeardAll; refreshSky() }
+        if (heard.isEmpty()) side.addView(skyNote("아직 들은 메시지가 없어요"))
         (if (skyHeardAll) heard else heard.take(3)).forEach { m -> side.addView(skyHeardRow(m, whenName)) }
     }
 
-    /** 달리면서 「다온, 여기 저장해 줘」로 저장한 곳: 어느 모임 자리인지와 함께, 남기기 · 지우기 */
+    /** 달리면서 「다온, 여기 저장해 줘」로 저장한 곳: 어느 그룹 자리인지와 함께, 남기기 · 지우기 */
     /**
-     * 오늘 온 안부 (예전 「오늘」 메뉴에서 옮김): 얼굴 · 개수 · 모아 듣기, 기다리는 안부가 있으면 지금 듣기.
+     * 오늘 온 메시지 (예전 「오늘」 메뉴에서 옮김): 얼굴 · 개수 · 모아 듣기, 기다리는 메시지가 있으면 지금 듣기.
      * 오늘 온 것도 기다리는 것도 없으면 칸을 두지 않는다.
      */
     private fun skyTodaySection(side: LinearLayout) {
@@ -1827,7 +1827,7 @@ class MainActivity : Activity(), Engine.Ui {
         val hide = discreet()
         val px = { dpv: Int -> (dpv / resources.displayMetrics.density).toInt() } // avatar는 dp로 받는다
         val who = (heardToday.map { it.authorName to circle?.memberByName(it.authorName) } + waiting.map { it.authorName to memberOf(it) }).distinctBy { it.first }
-        skyHeader(side, "오늘 받은 안부", Color.parseColor("#34C3A0"), null) {}
+        skyHeader(side, "오늘 받은 메시지", Color.parseColor("#34C3A0"), null) {}
         side.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             setPadding(0, pxu(8), 0, pxu(10))
@@ -1860,8 +1860,8 @@ class MainActivity : Activity(), Engine.Ui {
             val key = if (m.isPlace) "place" else m.opensOn
             addView(art(if (hide) R.drawable.cd_together else condArt[key] ?: R.drawable.ic3_pin, 34), LinearLayout.LayoutParams(pxu(34), pxu(34)).apply { marginEnd = pxu(12) })
             addView(column().apply {
-                addView(skyText("기다리는 안부 ${waiting.size}개", 14f, skySub, 600))
-                addView(skyText(if (hide) "안부가 도착했어요" else "${m.authorName}님이 ${m.occasion} 남겼어요", 17f, skyInk, 700).apply {
+                addView(skyText("기다리는 메시지 ${waiting.size}개", 14f, skySub, 600))
+                addView(skyText(if (hide) "메시지가 도착했어요" else "${m.authorName}님이 ${m.occasion} 남겼어요", 17f, skyInk, 700).apply {
                     maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
             }, LinearLayout.LayoutParams(0, -2, 1f))
             addView(skyText("▶ 지금 듣기", 16f, Color.WHITE, 700).apply {
@@ -1885,7 +1885,7 @@ class MainActivity : Activity(), Engine.Ui {
             addView(icon(R.drawable.ic_play, 26, skyBlue), LinearLayout.LayoutParams(pxu(28), pxu(28)).apply { marginEnd = pxu(12) })
             addView(column().apply {
                 addView(skyText("지금 듣는 중", 14f, skySub, 600))
-                addView(skyText(if (hide) "안부를 들려주고 있어요" else "${m.authorName}의 안부", 18f, skyInk, 700).apply {
+                addView(skyText(if (hide) "메시지를 들려주고 있어요" else "${m.authorName}의 메시지", 18f, skyInk, 700).apply {
                     maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
             }, LinearLayout.LayoutParams(0, -2, 1f))
             // 다 듣고 「들었어요」를 보내기 전 잠깐은 「보내지 않기」
@@ -1902,7 +1902,7 @@ class MainActivity : Activity(), Engine.Ui {
         }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = pxu(10) })
     }
 
-    /** 고른 모임의 저장한 곳 (모임을 정하지 않고 저장한 곳은 늘 보인다) */
+    /** 고른 그룹의 저장한 곳 (그룹을 정하지 않고 저장한 곳은 늘 보인다) */
     private fun viewSpots() = store.spots.filter { sp -> viewCircle == null || sp.circleId.isEmpty() || sp.circleId == viewCircle }
 
     /** Gleo에게 말로 남기는 법: 예시 문장이 몇 초마다 바뀐다 (운전 중에도 화면을 보지 않고 쓸 수 있게) */
@@ -1960,25 +1960,25 @@ class MainActivity : Activity(), Engine.Ui {
     }
 
     /**
-     * 메인 안내에 번갈아 보일 말: 「녹음해 줘」(지금 모임) + 들어간 모임마다 「우리집 녹음해 줘」.
-     * 그룹은 모임 이름을 정확히 말해야 그 모임에 남는다 (VoiceNote · Engine.findGroupExact). (글레오에게 하는 말, 받는 모임)
+     * 메인 안내에 번갈아 보일 말: 「녹음해 줘」(지금 그룹) + 들어간 그룹마다 「우리집 녹음해 줘」.
+     * 그룹은 그룹 이름을 정확히 말해야 그 그룹에 남는다 (VoiceNote · Engine.findGroupExact). (글레오에게 하는 말, 받는 그룹)
      */
     private fun voiceExamples(): List<Pair<String, String>> =
-        // 모임 이름 없이 「녹음해 줘」만 해도 지금 모임에 남지만, 화면에는 모임 이름을 말하는 꼴만 보여 준다
-        Engine.groupNames().map { "$it 녹음해 줘" to it }.ifEmpty { listOf("(모임 이름) 녹음해 줘" to "그 모임") }
+        // 그룹 이름 없이 「녹음해 줘」만 해도 지금 그룹에 남지만, 화면에는 그룹 이름을 말하는 꼴만 보여 준다
+        Engine.groupNames().map { "$it 녹음해 줘" to it }.ifEmpty { listOf("(그룹 이름) 녹음해 줘" to "그 그룹") }
 
     /** 마지막 글자에 받침이 있는지 (이/가 고르기) */
     private fun hasBatchim(w: String): Boolean { val c = w.trim().lastOrNull() ?: return false; return c in '가'..'힣' && (c - '가') % 28 != 0 }
 
-    /** 내가 남긴 안부: 최근 3개 · 누가 들었는지 · 답장. 전체는 소식에서 (고치기·지우기도 거기서) */
+    /** 내가 남긴 메시지: 최근 3개 · 누가 들었는지 · 답장. 전체는 소식에서 (고치기·지우기도 거기서) */
     private fun skyMineSection(side: LinearLayout) {
         val mine = visibleMessages().filter { isMine(it) }.asReversed()
-        skyHeader(side, "내가 남긴 안부", Color.parseColor("#F2A23A"), if (mine.isNotEmpty()) "전체 ${mine.size}개" else null) { goTab(Screen.FEED) }
+        skyHeader(side, "내가 남긴 메시지", Color.parseColor("#F2A23A"), if (mine.isNotEmpty()) "전체 ${mine.size}개" else null) { goTab(Screen.FEED) }
         if (mine.isEmpty()) {
             side.addView(LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
                 setPadding(0, pxu(4), 0, pxu(6))
-                addView(skyText("아직 남긴 안부가 없어요", 14f, skySub), LinearLayout.LayoutParams(0, -2, 1f))
+                addView(skyText("아직 남긴 메시지가 없어요", 14f, skySub), LinearLayout.LayoutParams(0, -2, 1f))
                 addView(skyText("남기기", 14f, Color.WHITE, 700).apply {
                     gravity = Gravity.CENTER; setPadding(pxu(16), 0, pxu(16), 0)
                     background = pressable(GradientDrawable().apply { setColor(sky("#131A26", "#4D7BEA")); cornerRadius = pxu(18).toFloat() })
@@ -2002,8 +2002,8 @@ class MainActivity : Activity(), Engine.Ui {
                     addView(art(condArt[key] ?: R.drawable.ic3_pin, 28), android.widget.FrameLayout.LayoutParams(pxu(28), pxu(28), Gravity.CENTER))
                 }, LinearLayout.LayoutParams(pxu(44), pxu(44)).apply { marginEnd = pxu(12) })
                 addView(column().apply {
-                    // 목소리 안부에 받아 적은 글이 있으면 그 글을 보여 준다 (없으면 「목소리 안부」)
-                    addView(skyText(if (m.kind == "voice") (if (m.text.isNotBlank()) "목소리 · 「${m.text}」" else "목소리 안부") else "「${m.text}」", 16f, skyInk, 700).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
+                    // 목소리 메시지에 받아 적은 글이 있으면 그 글을 보여 준다 (없으면 「목소리 메시지」)
+                    addView(skyText(if (m.kind == "voice") (if (m.text.isNotBlank()) "목소리 · 「${m.text}」" else "목소리 메시지") else "「${m.text}」", 16f, skyInk, 700).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
                     addView(skyText("${toNames}에게 · ${m.occasion}", 13f, skySub).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END },
                         LinearLayout.LayoutParams(-2, -2).apply { topMargin = pxu(3) })
                 }, LinearLayout.LayoutParams(0, -2, 1f))
@@ -2083,7 +2083,7 @@ class MainActivity : Activity(), Engine.Ui {
         addView(avatar(m.authorName, (44 / resources.displayMetrics.density).toInt(), member = Engine.circles[m.circleId]?.member(m.authorId)), LinearLayout.LayoutParams(pxu(44), pxu(44)).apply { marginEnd = pxu(12) })
         addView(column().apply {
             addView(skyText(m.authorName, 16.5f, skyInk, 700))
-            addView(skyText("${if (m.isPlace) m.placeName else whenName[m.opensOn] ?: m.placeName} · ${Engine.circles[m.circleId]?.name ?: "모임"}", 13f, skySub).apply {
+            addView(skyText("${if (m.isPlace) m.placeName else whenName[m.opensOn] ?: m.placeName} · ${Engine.circles[m.circleId]?.name ?: "그룹"}", 13f, skySub).apply {
                 maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = pxu(2) })
         }, LinearLayout.LayoutParams(0, -2, 1f))
         addView(skyText("다시 듣기", 13.5f, skyInk, 600).apply {
@@ -2093,10 +2093,10 @@ class MainActivity : Activity(), Engine.Ui {
         }, LinearLayout.LayoutParams(-2, pxu(34)))
     }
 
-    /** 고른 시·도의 안부: 들은 것은 하나씩, 못 들은 것은 개수만 */
+    /** 고른 시·도의 메시지: 들은 것은 하나씩, 못 들은 것은 개수만 */
     private fun skyRegionSection(side: LinearLayout, r: SkyGroup, sel: Regions.Region?, vis: List<PlaceMessage>, ids: Set<String>) {
         val inRegion = vis.filter { it.isPlace && (if (sel != null) regionsOf(it).first?.code == sel.code else regionsOf(it).first?.code in r.codes) }
-        skyHeader(side, if (sel != null) "${r.name} · ${sel.name}의 안부" else "${r.name}의 안부", skyBlue, "닫기") { skyBack() }
+        skyHeader(side, if (sel != null) "${r.name} · ${sel.name}의 메시지" else "${r.name}의 메시지", skyBlue, "닫기") { skyBack() }
         val left = inRegion.count { it.id !in ids }
         if (left > 0) side.addView(LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
@@ -2106,13 +2106,13 @@ class MainActivity : Activity(), Engine.Ui {
                 addView(art(sel?.let { regionArt[it.name] } ?: r.art, 40), android.widget.FrameLayout.LayoutParams(pxu(40), pxu(40), Gravity.CENTER))
             }, LinearLayout.LayoutParams(pxu(62), pxu(62)).apply { marginEnd = pxu(16) })
             addView(column().apply {
-                addView(skyText("못 들은 안부 ${left}개", 20f, skyInk, 700))
+                addView(skyText("못 들은 메시지 ${left}개", 20f, skyInk, 700))
                 addView(skyText("그 자리를 지나면 열려요", 17f, skySub), LinearLayout.LayoutParams(-2, -2).apply { topMargin = pxu(3) })
             }, LinearLayout.LayoutParams(0, -2, 1f))
         })
         val whenName = WHEN_OPTIONS.toMap()
         inRegion.filter { it.id in ids }.forEach { m -> side.addView(skyHeardRow(m, whenName)) }
-        if (inRegion.isEmpty()) side.addView(skyNote("이 지역에 남겨 둔 안부가 없어요"))
+        if (inRegion.isEmpty()) side.addView(skyNote("이 지역에 남겨 둔 메시지가 없어요"))
     }
 
     private fun mapChip(s: String, onClick: () -> Unit) = Button(this).apply {
@@ -2174,7 +2174,7 @@ class MainActivity : Activity(), Engine.Ui {
                         if (i == 0) demoMove(at.latitude, at.longitude, Regions.districtOf(at.latitude, at.longitude)?.let { fullName(it) } ?: "고른 곳")
                         else openLeaveAt(at.latitude, at.longitude)
                     }
-                    else confirm("여기에 메시지를 남길까요?", "고른 자리를 모임의 다른 사람이 지나가면 그 사람 차에서 들려줘요.", "남기기") { openLeaveAt(at.latitude, at.longitude) }
+                    else confirm("여기에 메시지를 남길까요?", "고른 자리를 그룹의 다른 사람이 지나가면 그 사람 차에서 들려줘요.", "남기기") { openLeaveAt(at.latitude, at.longitude) }
                     true
                 }
             }
@@ -2227,9 +2227,9 @@ class MainActivity : Activity(), Engine.Ui {
                 "region" -> (Regions.provinces + Regions.districts).firstOrNull { it.code == id }?.let { selectRegion(it) }
                 "msg" -> messages.firstOrNull { it.id == id }?.let { selMessage = it; refreshMain() }
                 "spot" -> store.spots.firstOrNull { it.id == id }?.let { sp ->
-                    confirm("이 자리에 안부를 남길까요?", "${sp.memo.ifBlank { spotPlaceName(sp) }} · ${spotWhen(sp)}", "남기기") { openSpot(sp) }
+                    confirm("이 자리에 메시지를 남길까요?", "${sp.memo.ifBlank { spotPlaceName(sp) }} · ${spotWhen(sp)}", "남기기") { openSpot(sp) }
                 }
-                "fuzzy" -> toast("${messages.firstOrNull { it.id == id }?.let { Engine.circles[it.circleId]?.name } ?: "모임"}의 안부가 이 근처 어딘가에 있어요. 지나가면 들려 드려요")
+                "fuzzy" -> toast("${messages.firstOrNull { it.id == id }?.let { Engine.circles[it.circleId]?.name } ?: "그룹"}의 메시지가 이 근처 어딘가에 있어요. 지나가면 들려 드려요")
             }
             return
         }
@@ -2238,7 +2238,7 @@ class MainActivity : Activity(), Engine.Ui {
         }
     }
 
-    /** 안부가 있는 지역인지 */
+    /** 메시지가 있는 지역인지 */
     private fun f0(code: String) = regionStats(if (code.length > 2) 1 else 0).keys.any { it.code == code }
 
     /** 그 자리를 가운데 두고 부드럽게 확대·축소 */
@@ -2268,13 +2268,13 @@ class MainActivity : Activity(), Engine.Ui {
         refreshSide()
     }
 
-    /** 모임 색 */
+    /** 그룹 색 */
     private fun circleColor(circleId: String): Int {
         val i = store.memberships.indexOfFirst { it.circleId == circleId }.coerceAtLeast(0)
         return MEMBER_COLORS[CIRCLE_COLOR_NAMES[i % CIRCLE_COLOR_NAMES.size]] ?: ACCENT
     }
 
-    /** 보기에서 고른 모임·사람의 메시지만 */
+    /** 보기에서 고른 그룹·사람의 메시지만 */
     private fun visibleMessages(): List<PlaceMessage> {
         val hc = store.hiddenCircles; val hm = store.hiddenMembers
         // 다른 사람에게만 보낸 메시지는 이 차에서 세지 않는다 (내가 남긴 것은 보인다)
@@ -2282,11 +2282,11 @@ class MainActivity : Activity(), Engine.Ui {
             .filter { m -> viewCircle?.let { it == m.circleId } ?: true }
     }
 
-    /** 보는 모임: null이면 모든 모임. 메인·오늘의 모임 고르기에서 바꾼다 */
+    /** 보는 그룹: null이면 모든 그룹. 메인·오늘의 그룹 고르기에서 바꾼다 */
     private var viewCircle: String? = null
 
-    /** 오늘 들은 것 · 기다리는 것 중 고른 모임 것 */
-    /** 오늘 이 차에서 들은 안부 중 지금 타는 사람 것만 (바꿔 타면 앞 사람이 받은 안부는 보이지 않는다) */
+    /** 오늘 들은 것 · 기다리는 것 중 고른 그룹 것 */
+    /** 오늘 이 차에서 들은 메시지 중 지금 타는 사람 것만 (바꿔 타면 앞 사람이 받은 메시지는 보이지 않는다) */
     private fun viewHeardToday() = store.heard.filter { h ->
         val m = messages.firstOrNull { it.id == h.messageId } ?: return@filter false
         (m.to.isEmpty() || Engine.ownerOf(m) in m.to) && (viewCircle == null || m.circleId == viewCircle)
@@ -2294,8 +2294,8 @@ class MainActivity : Activity(), Engine.Ui {
     private fun viewPending() = pending.filter { viewCircle == null || it.circleId == viewCircle }
 
     /**
-     * 모임 고르기: 「모든 모임 · 우리집 · 대학 동기」 유리 알약 하나. 모임마다 색 점과 못 들은 수.
-     * 모임이 하나뿐이면 보이지 않는다.
+     * 그룹 고르기: 「모든 그룹 · 우리집 · 대학 동기」 유리 알약 하나. 그룹마다 색 점과 못 들은 수.
+     * 그룹이 하나뿐이면 보이지 않는다.
      */
     private fun circleSwitch(onChange: () -> Unit): View? {
         val joined = store.liveMemberships.mapNotNull { ms -> Engine.circles[ms.circleId] }
@@ -2332,7 +2332,7 @@ class MainActivity : Activity(), Engine.Ui {
         (d?.let { Regions.provinceOfDistrict(it) } ?: Regions.provinceOf(m.lat, m.lon)) to d
     }
 
-    /** 지역 안의 (찾은 수, 전체 수, 들어 있는 모임들). 내가 남긴 것은 세지 않는다. */
+    /** 지역 안의 (찾은 수, 전체 수, 들어 있는 그룹들). 내가 남긴 것은 세지 않는다. */
     private data class RegionStat(val found: Int, val total: Int, val circles: List<String>)
 
     private fun regionStats(level: Int): Map<Regions.Region, RegionStat> {
@@ -2385,7 +2385,7 @@ class MainActivity : Activity(), Engine.Ui {
         list.forEach { r ->
             val st = stats[r]
             val left = st?.let { it.total - it.found } ?: 0
-            // 땅은 옅은 회색, 안부가 있는 지역은 못 찾은 게 많을수록 진한 파랑, 다 찾으면 초록
+            // 땅은 옅은 회색, 메시지가 있는 지역은 못 찾은 게 많을수록 진한 파랑, 다 찾으면 초록
             val base = if (sky != null) (if (NIGHT) 0xFF1A2452.toInt() else 0xFFE4EDFA.toInt()) else SOFT // 하늘 메인에서는 연한 하늘색 땅
             val fill = when {
                 st == null -> base
@@ -2423,7 +2423,7 @@ class MainActivity : Activity(), Engine.Ui {
             val (lat, lon, kind) = when {
                 isMine(m) && m.isPlace -> Triple(m.lat, m.lon, "mine")
                 m.id in ids && m.isPlace -> Triple(m.lat, m.lon, "msg")
-                // 비·밤길 같은 조건 안부는 들었던 자리(이 차 안에만 저장)에
+                // 비·밤길 같은 조건 메시지는 들었던 자리(이 차 안에만 저장)에
                 m.id in ids -> localFound[m.id]?.let { Triple(it.lat, it.lon, "msg") } ?: return@forEach
                 m.isPlace && !isMine(m) -> fuzzy(m).let { Triple(it.first, it.second, "fuzzy") }
                 else -> return@forEach
@@ -2437,7 +2437,7 @@ class MainActivity : Activity(), Engine.Ui {
         }
     }
 
-    /** 못 찾은 안부는 정확한 자리를 숨기고, 반경 안쪽 어딘가(메시지마다 늘 같은 곳)에 흐린 동그라미로 */
+    /** 못 찾은 메시지는 정확한 자리를 숨기고, 반경 안쪽 어딘가(메시지마다 늘 같은 곳)에 흐린 동그라미로 */
     private fun fuzzy(m: PlaceMessage): Pair<Double, Double> {
         val h = m.id.hashCode()
         val angle = (h and 0xFFFF) / 65535.0 * 2 * Math.PI
@@ -2449,7 +2449,7 @@ class MainActivity : Activity(), Engine.Ui {
 
     private fun withAlpha(c: Int, a: Int) = Color.argb(a.coerceIn(0, 255), Color.red(c), Color.green(c), Color.blue(c))
 
-    /** 지역을 고르면 그 지역이 꽉 차게 확대하고, 오른쪽 칸 위에 그 지역 안부를 보여 준다 */
+    /** 지역을 고르면 그 지역이 꽉 차게 확대하고, 오른쪽 칸 위에 그 지역 메시지를 보여 준다 */
     private fun selectRegion(r: Regions.Region) {
         selRegion = r
         selMessage = null
@@ -2462,13 +2462,13 @@ class MainActivity : Activity(), Engine.Ui {
         refreshMain()
     }
 
-    /** 고른 안부가 보이게 지도를 그 자리로 */
+    /** 고른 메시지가 보이게 지도를 그 자리로 */
     private fun focusMessage(m: PlaceMessage) {
         selMessage = m
         val at = if (m.isPlace) m.lat to m.lon else store.found.firstOrNull { it.messageId == m.id }?.let { it.lat to it.lon }
         at?.let { flyTo(it.first, it.second, maxOf(14.5, mainLib?.cameraPosition?.zoom ?: 0.0)) }
         refreshMain()
-        // 고른 안부 카드는 오른쪽 칸 위쪽에 생긴다: 아래 목록에서 골랐어도 보이게 맨 위로
+        // 고른 메시지 카드는 오른쪽 칸 위쪽에 생긴다: 아래 목록에서 골랐어도 보이게 맨 위로
         (mainSide?.parent as? ScrollView)?.post { (mainSide?.parent as? ScrollView)?.smoothScrollTo(0, 0) }
     }
 
@@ -2501,7 +2501,7 @@ class MainActivity : Activity(), Engine.Ui {
 
     /**
      * 시연: 실제로 달리지 않고 차를 옮기거나 시동·주차한 것처럼. 앱 안의 위치만 바뀐다(기본 내비 화면은 그대로).
-     * 안부 장소로 옮기면 그 안부가 열려 재생 화면이 뜨고, 그 자리에서 바로 남길 수도 있다.
+     * 메시지 장소로 옮기면 그 메시지가 열려 재생 화면이 뜨고, 그 자리에서 바로 남길 수도 있다.
      */
     private fun demoCard() = panel().apply {
         background = rounded(CARD, 2, BORDER)
@@ -2513,11 +2513,11 @@ class MainActivity : Activity(), Engine.Ui {
             addView(column().apply {
                 addView(text("시연 · 차 움직여 보기", 28f, INK, bold = true))
                 addView(label(if (at != null) "시간·요일 조건은 건너뛰어요 · 지금 시연 위치: ${demoPlaceName ?: Regions.districtOf(at.first, at.second)?.let { fullName(it) } ?: "고른 곳"}"
-                    else "달리지 않고 안부 장소로 옮겨 볼 수 있어요. 지도를 길게 눌러도 돼요"))
+                    else "달리지 않고 메시지 장소로 옮겨 볼 수 있어요. 지도를 길게 눌러도 돼요"))
             }, LinearLayout.LayoutParams(0, -2, 1f))
         })
         addView(row(
-            primary("안부 장소로 이동") { pickDemoPlace() },
+            primary("메시지 장소로 이동") { pickDemoPlace() },
             secondary(if (at != null) "실제 위치로" else "지도 가운데로") {
                 if (at != null) { Engine.setDemoLocation(null); demoPlaceName = null; toast("실제 위치(GPS)로 돌아왔어요"); refreshMain() }
                 else mainLib?.cameraPosition?.target?.let { t -> demoMove(t.latitude, t.longitude, Regions.districtOf(t.latitude, t.longitude)?.let { fullName(it) } ?: "지도 가운데") }
@@ -2530,14 +2530,14 @@ class MainActivity : Activity(), Engine.Ui {
     }
 
     private fun demoResult(n: Int, name: String) {
-        toast(if (n > 0) "「$name」 안부 ${n}개가 열렸어요" else "지금 열 「$name」 안부가 없어요 (한 번만 듣는 안부는 이미 들었으면 「들은 안부」에서 다시 들어요)")
+        toast(if (n > 0) "「$name」 메시지 ${n}개가 열렸어요" else "지금 열 「$name」 메시지가 없어요 (한 번만 듣는 메시지는 이미 들었으면 「들은 메시지」에서 다시 들어요)")
         demoShowPlayback()
     }
 
     /** 시연 버튼은 직접 누른 것이라 소리로만 시작했어도 재생 화면을 연다 */
     private fun demoShowPlayback() { if (Engine.quietPlay) Engine.showPlayback() }
 
-    /** 시연 위치 이름 (고른 안부 장소 이름) */
+    /** 시연 위치 이름 (고른 메시지 장소 이름) */
     private var demoPlaceName: String? = null
     /** 「가족에게 가기」로 옮겨 간 사람 (옮긴 뒤 「여기서 ○○에게 남기기」의 받는 사람) */
     private var demoTarget: Member? = null
@@ -2545,22 +2545,22 @@ class MainActivity : Activity(), Engine.Ui {
     /** "지연(누나)" · "아빠" */
     private fun who(m: Member) = if (m.title.isNotBlank() && m.title != m.name) "${m.name}(${m.title})" else m.name
 
-    /** 그 사람이 남긴 장소 안부 중 가장 최근 것 (그 사람이 있는 쪽으로 보는 자리). 위치는 서버로 보내지 않으므로 안부 장소를 쓴다. */
+    /** 그 사람이 남긴 장소 메시지 중 가장 최근 것 (그 사람이 있는 쪽으로 보는 자리). 위치는 서버로 보내지 않으므로 메시지 장소를 쓴다. */
     private fun familySpot(m: Member): PlaceMessage? =
         visibleMessages().filter { it.isPlace && it.authorId == m.id && it.circleId == circle?.id }.lastOrNull()
 
-    /** 시연: 그 사람의 자리로 옮긴다. 그 자리 안부가 아직 안 들은 것이면 Engine이 바로 들려준다. */
+    /** 시연: 그 사람의 자리로 옮긴다. 그 자리 메시지가 아직 안 들은 것이면 Engine이 바로 들려준다. */
     private fun demoGoTo(m: Member, spot: PlaceMessage) {
         demoTarget = m
         demoMove(spot.lat, spot.lon, spot.placeName)
         render()
     }
 
-    /** 시연: 지금 자리 근처의 나에게 온 안부를 (이미 들었어도) 다시 들려준다 */
+    /** 시연: 지금 자리 근처의 나에게 온 메시지를 (이미 들었어도) 다시 들려준다 */
     private fun demoListenHere(at: Pair<Double, Double>) {
         val here = visibleMessages().filter { it.isPlace && !isMine(it) && distanceM(at.first, at.second, it.lat, it.lon) <= maxOf(it.radiusM, 300.0) }
             .sortedBy { distanceM(at.first, at.second, it.lat, it.lon) }
-        if (here.isEmpty()) { toast("이 자리에 남은 안부가 없어요"); return }
+        if (here.isEmpty()) { toast("이 자리에 남은 메시지가 없어요"); return }
         Engine.replay(here.first())
     }
 
@@ -2576,10 +2576,10 @@ class MainActivity : Activity(), Engine.Ui {
         render()
     }
 
-    /** 시연: 나에게 온 장소 안부 중에서 골라 그 자리로 */
+    /** 시연: 나에게 온 장소 메시지 중에서 골라 그 자리로 */
     private fun pickDemoPlace() {
         val places = visibleMessages().filter { it.isPlace && !isMine(it) }.distinctBy { it.placeName }.sortedBy { it.placeName }
-        if (places.isEmpty()) { toast("나에게 온 장소 안부가 없어요"); return }
+        if (places.isEmpty()) { toast("나에게 온 장소 메시지가 없어요"); return }
         val ids = foundIds()
         pickFrom("어디로 가 볼까요?", places.map { m -> m.placeName + if (m.id in ids) " · 들음" else "" }) { i -> demoMove(places[i].lat, places[i].lon, places[i].placeName) }
     }
@@ -2589,11 +2589,11 @@ class MainActivity : Activity(), Engine.Ui {
         Engine.setDemoLocation(lat to lon)
         demoShowPlayback()
         flyTo(lat, lon, maxOf(14.5, mainLib?.cameraPosition?.zoom ?: 0.0))
-        toast("「$name」(으)로 옮겼어요 · 이 근처 안부가 있으면 들려 드려요")
+        toast("「$name」(으)로 옮겼어요 · 이 근처 메시지가 있으면 들려 드려요")
         if (screen == Screen.HOME) refreshMain()
     }
 
-    /** 주행 중 말로 저장한 곳: 하나씩 「안부 남기기」 또는 지우기 */
+    /** 주행 중 말로 저장한 곳: 하나씩 「메시지 남기기」 또는 지우기 */
     private fun spotsCard() = panel().apply {
         background = rounded(CARD, 3, ACCENT)
         val list = store.spots.sortedByDescending { it.at }
@@ -2603,7 +2603,7 @@ class MainActivity : Activity(), Engine.Ui {
             addView(icon(R.drawable.ic_mic, 40, ACCENT), LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(14) })
             addView(column().apply {
                 addView(text("달리면서 저장한 곳 ${list.size}곳", 28f, INK, bold = true))
-                addView(label("「여기 저장해 줘」라고 말한 자리예요. 안부로 남겨 보세요"))
+                addView(label("「여기 저장해 줘」라고 말한 자리예요. 메시지로 남겨 보세요"))
             }, LinearLayout.LayoutParams(0, -2, 1f))
         })
         list.take(4).forEach { sp ->
@@ -2642,7 +2642,7 @@ class MainActivity : Activity(), Engine.Ui {
     private fun spotConditions(sp: TripStore.Spot) = sp.conditions.split(",").filter { it.isNotBlank() }
         .mapNotNull { mapOf("rain" to "비", "night" to "밤길", "together" to "동승")[it] }.joinToString("") { " · $it" }
 
-    /** 저장한 곳으로 안부 남기기: 장소를 채운 채 「내용」 단계로 바로 */
+    /** 저장한 곳으로 메시지 남기기: 장소를 채운 채 「내용」 단계로 바로 */
     private fun openSpot(sp: TripStore.Spot) {
         goTab(Screen.LEAVE)
         leaveWhen = "place"
@@ -2660,7 +2660,7 @@ class MainActivity : Activity(), Engine.Ui {
         render()
     }
 
-    /** 고른 안부 하나: 누가 · 어느 모임 · 어디서 · 다시 듣기 */
+    /** 고른 메시지 하나: 누가 · 어느 그룹 · 어디서 · 다시 듣기 */
     private fun selectedCard(m: PlaceMessage) = panel().apply {
         val c = Engine.circles[m.circleId]
         val mine = isMine(m)
@@ -2669,7 +2669,7 @@ class MainActivity : Activity(), Engine.Ui {
             gravity = Gravity.CENTER_VERTICAL
             addView(avatar(m.authorName, 64, member = c?.member(m.authorId)), LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(16) })
             addView(column().apply {
-                addView(text(if (mine) "내가 ${m.occasion} 남긴 안부" else "${m.authorName}님이 ${m.occasion} 남긴 안부", 26f, INK, bold = true))
+                addView(text(if (mine) "내가 ${m.occasion} 남긴 메시지" else "${m.authorName}님이 ${m.occasion} 남긴 메시지", 26f, INK, bold = true))
                 addView(circleTag(m.circleId))
             }, LinearLayout.LayoutParams(0, -2, 1f))
             addView(navButton("닫기") { selMessage = null; refreshSide(); mapSig = "" ; refreshMain() }, LinearLayout.LayoutParams(dp(130), dp(72)))
@@ -2693,16 +2693,16 @@ class MainActivity : Activity(), Engine.Ui {
         })
     }
 
-    /** 모임 이름 꼬리표 (모임 색 점 + 이름) */
+    /** 그룹 이름 꼬리표 (그룹 색 점 + 이름) */
     private fun circleTag(circleId: String) = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         addView(View(context).apply { background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(circleColor(circleId)) } },
             LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginEnd = dp(8) })
-        addView(text(Engine.circles[circleId]?.name ?: "모임", 20f, MUTED))
+        addView(text(Engine.circles[circleId]?.name ?: "그룹", 20f, MUTED))
     }
 
-    /** 고른 지역의 안부: 찾은 것·내가 남긴 것은 하나씩, 못 찾은 것은 개수만 */
+    /** 고른 지역의 메시지: 찾은 것·내가 남긴 것은 하나씩, 못 찾은 것은 개수만 */
     private fun regionCard(r: Regions.Region) = panel().apply {
         val ids = foundIds()
         val inRegion = visibleMessages().filter { it.isPlace && regionsOf(it).let { x -> x.first == r || x.second == r } }
@@ -2713,17 +2713,17 @@ class MainActivity : Activity(), Engine.Ui {
             gravity = Gravity.CENTER_VERTICAL
             addView(column().apply {
                 addView(text(fullName(r), 30f, INK, bold = true))
-                addView(text("찾은 안부 ${found.size} / ${others.size}", 22f, ACCENT, weight = 600))
+                addView(text("찾은 메시지 ${found.size} / ${others.size}", 22f, ACCENT, weight = 600))
             }, LinearLayout.LayoutParams(0, -2, 1f))
             addView(navButton("닫기") { selRegion = null; refreshMain() }, LinearLayout.LayoutParams(dp(130), dp(72)))
         })
         addView(progressBar(found.size, others.size))
         val left = others.size - found.size
-        addView(label(if (left > 0) "아직 ${left}개가 ${r.name} 어딘가에 있어요. 지나가면 들려 드려요" else if (others.isNotEmpty()) "이 지역 안부를 다 찾았어요!" else "모임 사람들이 남긴 안부가 없어요"))
+        addView(label(if (left > 0) "아직 ${left}개가 ${r.name} 어딘가에 있어요. 지나가면 들려 드려요" else if (others.isNotEmpty()) "이 지역 메시지를 다 찾았어요!" else "그룹 사람들이 남긴 메시지가 없어요"))
         (found + inRegion.filter { isMine(it) }).forEach { m -> addView(messageRow(m)) }
     }
 
-    /** 목록 한 줄: 얼굴 · 누가 어디서 · 모임. 누르면 지도가 그 자리로 */
+    /** 목록 한 줄: 얼굴 · 누가 어디서 · 그룹. 누르면 지도가 그 자리로 */
     private fun messageRow(m: PlaceMessage) = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
@@ -2740,21 +2740,21 @@ class MainActivity : Activity(), Engine.Ui {
     }
 
     /**
-     * 상황별 안부: 아직 못 들은 것만. 장소 없이 차 상태로 열리는 안부(비·밤길·옆자리·차에 탈 때…).
-     * 내용과 보낸 사람은 숨기고(그 상황이 됐을 때 깜짝) 개수와 모임만. 들은 것은 「들은 안부」에.
+     * 상황별 메시지: 아직 못 들은 것만. 장소 없이 차 상태로 열리는 메시지(비·밤길·옆자리·차에 탈 때…).
+     * 내용과 보낸 사람은 숨기고(그 상황이 됐을 때 깜짝) 개수와 그룹만. 들은 것은 「들은 메시지」에.
      */
     private fun conditionCard() = panel().apply {
         val ids = foundIds()
         val waiting = visibleMessages().filter { !it.isPlace && !isMine(it) && it.id !in ids }
         val groups = WHEN_OPTIONS.filter { it.first != "place" }.map { (key, name) -> Triple(key, name, waiting.filter { it.opensOn == key }) }
             .filter { it.third.isNotEmpty() }
-        // 처음엔 한 줄 요약. 누르면 안부가 있는 상황만 펼친다 (없는 상황은 숨긴다).
+        // 처음엔 한 줄 요약. 누르면 메시지가 있는 상황만 펼친다 (없는 상황은 숨긴다).
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(column().apply {
-                addView(text(if (waiting.isEmpty()) "기다리는 상황별 안부 없음" else "기다리는 상황별 안부 ${waiting.size}개", 28f, INK, bold = true))
-                addView(label(if (waiting.isEmpty()) "들은 안부는 아래 「들은 안부」에 있어요" else "그 상황이 되면 들려 드려요"))
+                addView(text(if (waiting.isEmpty()) "기다리는 상황별 메시지 없음" else "기다리는 상황별 메시지 ${waiting.size}개", 28f, INK, bold = true))
+                addView(label(if (waiting.isEmpty()) "들은 메시지는 아래 「들은 메시지」에 있어요" else "그 상황이 되면 들려 드려요"))
             }, LinearLayout.LayoutParams(0, -2, 1f))
             if (waiting.isNotEmpty()) addView(text(if (conditionsExpanded) "▲" else "▼", 24f, MUTED))
             if (waiting.isNotEmpty()) {
@@ -2778,19 +2778,19 @@ class MainActivity : Activity(), Engine.Ui {
                 setOnClickListener { openCondition = if (open) null else key; refreshSide() }
             })
             if (open) {
-                val byCircle = ms.groupBy { Engine.circles[it.circleId]?.name ?: "모임" }.map { (c, l) -> "$c ${l.size}개" }.joinToString(" · ")
+                val byCircle = ms.groupBy { Engine.circles[it.circleId]?.name ?: "그룹" }.map { (c, l) -> "$c ${l.size}개" }.joinToString(" · ")
                 addView(label("${WHEN_HINTS.getValue(key)} · $byCircle").apply { setPadding(dp(50), 0, 0, dp(10)) })
             }
         }
     }
 
-    /** 들은 안부: 이 차가 이미 들은 안부를 모아 다시 듣기 (전체 · 상황별 · 장소) */
+    /** 들은 메시지: 이 차가 이미 들은 메시지를 모아 다시 듣기 (전체 · 상황별 · 장소) */
     private fun heardCard() = panel().apply {
         val ids = foundIds()
         val heard = visibleMessages().filter { !isMine(it) && it.id in ids }
         val list = when (heardTab) { "cond" -> heard.filter { !it.isPlace }; "place" -> heard.filter { it.isPlace }; else -> heard }
             .sortedByDescending { m -> feedHeard.filter { it.messageId == m.id }.maxOfOrNull { it.at } ?: "" }
-        addView(text("들은 안부 ${heard.size}개", 28f, INK, bold = true))
+        addView(text("들은 메시지 ${heard.size}개", 28f, INK, bold = true))
         addView(label("누르면 지도와 위 칸에서 다시 듣고 답장할 수 있어요"))
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2802,17 +2802,17 @@ class MainActivity : Activity(), Engine.Ui {
             }
             layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10); bottomMargin = dp(4) }
         })
-        if (list.isEmpty()) addView(label("아직 들은 안부가 없어요"))
+        if (list.isEmpty()) addView(label("아직 들은 메시지가 없어요"))
         val shown = if (heardMore) list else list.take(HEARD_PREVIEW)
         shown.forEach { m -> addView(messageRow(m)) }
         if (list.size > HEARD_PREVIEW) addView(secondary(if (heardMore) "접기" else "${list.size - HEARD_PREVIEW}개 더 보기") { heardMore = !heardMore; refreshSide() },
             LinearLayout.LayoutParams(-1, dp(72)).apply { topMargin = dp(6) })
     }
 
-    /** 보기: 모임마다 켜고 끄기(모임 색), 그 안에서 사람마다 켜고 끄기 */
+    /** 보기: 그룹마다 켜고 끄기(그룹 색), 그 안에서 사람마다 켜고 끄기 */
     private fun filterCard() = panel().apply {
         addView(text("보기", 28f, INK, bold = true))
-        addView(label("고른 모임·사람의 안부만 지도와 목록에 보여요 (이 차 안에서만)"))
+        addView(label("고른 그룹·사람의 메시지만 지도와 목록에 보여요 (이 차 안에서만)"))
         val hc = store.hiddenCircles; val hm = store.hiddenMembers
         store.memberships.forEach { ms ->
             val c = Engine.circles[ms.circleId] ?: return@forEach
@@ -2848,7 +2848,7 @@ class MainActivity : Activity(), Engine.Ui {
         }
     }
 
-    /** 지역 말풍선: 이름 · 찾은 수/전체 · 진행 막대 · 모임 색 점. 아래로 꼬리 */
+    /** 지역 말풍선: 이름 · 찾은 수/전체 · 진행 막대 · 그룹 색 점. 아래로 꼬리 */
     private fun regionBubble(name: String, st: RegionStat, selected: Boolean): android.graphics.Bitmap {
         val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
         val title = "$name ${st.found}/${st.total}"
@@ -2872,7 +2872,7 @@ class MainActivity : Activity(), Engine.Ui {
         cv.drawPath(path, p)
         p.color = fg
         cv.drawText(title, dp(20).toFloat(), dp(34).toFloat(), p)
-        // 모임 색 점
+        // 그룹 색 점
         st.circles.forEachIndexed { i, id ->
             p.color = circleColor(id)
             cv.drawCircle(dp(20) + tw + dp(12) + i * dp(16).toFloat(), dp(26).toFloat(), dp(6).toFloat(), p)
@@ -2886,7 +2886,7 @@ class MainActivity : Activity(), Engine.Ui {
         return bmp
     }
 
-    /** 얼굴 말풍선: 모임 색 동그라미에 이름 첫 글자, 아래로 꼬리. 내가 남긴 곳은 흰 바탕에 「나」 */
+    /** 얼굴 말풍선: 그룹 색 동그라미에 이름 첫 글자, 아래로 꼬리. 내가 남긴 곳은 흰 바탕에 「나」 */
     private fun faceBubble(letter: String, color: Int, mine: Boolean): android.graphics.Bitmap {
         val s = dp(60); val tail = dp(12)
         val bmp = android.graphics.Bitmap.createBitmap(s, s + tail, android.graphics.Bitmap.Config.ARGB_8888)
@@ -2918,7 +2918,7 @@ class MainActivity : Activity(), Engine.Ui {
         return bmp
     }
 
-    /** 못 찾은 안부: 흐린 동그라미에 「?」 */
+    /** 못 찾은 메시지: 흐린 동그라미에 「?」 */
     private fun fuzzyBitmap(color: Int): android.graphics.Bitmap {
         val s = dp(84)
         val bmp = android.graphics.Bitmap.createBitmap(s, s, android.graphics.Bitmap.Config.ARGB_8888)
@@ -2971,7 +2971,7 @@ class MainActivity : Activity(), Engine.Ui {
 
         // 그룹(이름·구성원·초대 코드·그룹의 차)은 왼쪽 메뉴 「그룹」으로 옮겼다. 여기는 이 차와 듣기 설정만.
         root.addView(section(R.drawable.ic_car, "이 차"))
-        root.addView(label("이 차에서는 주인에게 온 안부를 들려주고, 주인이 남긴 안부는 틀지 않아요. 그룹마다 이 차의 주인은 「그룹」 메뉴에서 볼 수 있어요."))
+        root.addView(label("이 차에서는 주인에게 온 메시지를 들려주고, 주인이 남긴 메시지는 틀지 않아요. 그룹마다 이 차의 주인은 「그룹」 메뉴에서 볼 수 있어요."))
         root.addView(row(
             secondary("차 이름: ${store.carName.ifBlank { "우리 차" }}") {
                 askText("이 차 이름", store.carName) { name -> Engine.renameCar(name) { ok -> if (!ok) toast("바꾸지 못했어요") } }
@@ -2979,7 +2979,7 @@ class MainActivity : Activity(), Engine.Ui {
             secondary("그룹 관리로 가기") { goTab(Screen.GROUPS) },
         ))
 
-        root.addView(section(R.drawable.ic_play, "안부가 열리면"))
+        root.addView(section(R.drawable.ic_play, "메시지가 열리면"))
         root.addView(toggle("차를 세웠을 때 재생 화면 띄우기", store.popUpScreen) { store.popUpScreen = it })
         root.addView(label("꺼 두면 보던 화면은 그대로 두고 소리로만 들려줘요. 화면으로 보고 싶을 때는 메인의 「화면 보기」를 누르세요."))
 
@@ -2987,8 +2987,8 @@ class MainActivity : Activity(), Engine.Ui {
         root.addView(toggle("옆자리에 누가 있으면 먼저 물어보기", store.askWithPassenger) { store.askWithPassenger = it; Engine.maybeAutoPlay() })
         root.addView(label("조수석 센서로 동승을 알아채면 바로 틀지 않고 「메시지가 도착했어요. 지금 들을까요?」라고만 물어요. 보낸 사람과 내용은 화면·알림에 나오지 않고, 「다음에」를 고르면 옆자리가 빈 뒤 들려줘요."))
 
-        root.addView(section(R.drawable.ic_people, "모임에 보일 내용"))
-        root.addView(label("기본은 공유 안 함이에요. 내가 켠 것만 모임에 보여요. 장소 이름과 동선은 보내지 않아요."))
+        root.addView(section(R.drawable.ic_people, "그룹에 보일 내용"))
+        root.addView(label("기본은 공유 안 함이에요. 내가 켠 것만 그룹에 보여요. 장소 이름과 동선은 보내지 않아요."))
         root.addView(toggle("이동 거리", store.shareDistance) { store.shareDistance = it; Engine.uploadDiary() })
         root.addView(toggle("쉬어간 횟수", store.shareRests) { store.shareRests = it; Engine.uploadDiary() })
         root.addView(toggle("들은 메시지", store.shareHeard) { store.shareHeard = it; Engine.uploadDiary() })
@@ -3034,17 +3034,17 @@ class MainActivity : Activity(), Engine.Ui {
             addView(miniPill("← 시나리오로") { demoManual = false; render() }.apply { (layoutParams as? LinearLayout.LayoutParams)?.marginStart = 0 }, LinearLayout.LayoutParams(-2, dp(64)))
         }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
         root.addView(title("시연"))
-        root.addView(label("실제로 달리지 않고 차를 옮기거나 차 상태를 바꿔 봐요. 실차에서는 차 신호로 저절로 돼요. 시연에서는 안부의 시간·요일 조건을 건너뛰어요."))
+        root.addView(label("실제로 달리지 않고 차를 옮기거나 차 상태를 바꿔 봐요. 실차에서는 차 신호로 저절로 돼요. 시연에서는 메시지의 시간·요일 조건을 건너뛰어요."))
         val ids = foundIds()
         val at = Engine.demoLocation
 
-        // 주행 없이 시연: 가족에게 가기 → 그 자리 안부 듣기 또는 그 자리에 남기기
+        // 주행 없이 시연: 가족에게 가기 → 그 자리 메시지 듣기 또는 그 자리에 남기기
         val c = circle
         val me = store.driverId
         root.addView(section(R.drawable.ic_people, "가족에게 가기"))
-        root.addView(label("달리지 않고 그 사람이 안부를 남긴 자리로 바로 옮겨요. 옮긴 뒤 그 자리 안부를 듣거나, 그 사람에게 남길 수 있어요."))
+        root.addView(label("달리지 않고 그 사람이 메시지를 남긴 자리로 바로 옮겨요. 옮긴 뒤 그 자리 메시지를 듣거나, 그 사람에게 남길 수 있어요."))
         val family = c?.members?.filter { it.id != me }?.mapNotNull { m -> familySpot(m)?.let { m to it } }.orEmpty()
-        if (family.isEmpty()) root.addView(label("가족이 남긴 장소 안부가 없어요"))
+        if (family.isEmpty()) root.addView(label("가족이 남긴 장소 메시지가 없어요"))
         family.chunked(3).forEach { line ->
             root.addView(row(*(line.map { (m, spot) ->
                 val label = "${who(m)} · ${spot.placeName}"
@@ -3059,16 +3059,16 @@ class MainActivity : Activity(), Engine.Ui {
                 big("${who(target)} 쪽 · ${demoPlaceName ?: "고른 곳"}"),
             )))
             root.addView(row(
-                primary("▶ 이 자리 안부 듣기") { demoListenHere(at) },
+                primary("▶ 이 자리 메시지 듣기") { demoListenHere(at) },
                 secondary("✎ 여기서 ${who(target)}에게 남기기") { demoLeaveHere(target, at) },
             ))
         }
 
         root.addView(section(R.drawable.ic_pin, "어디로 갈까요"))
-        root.addView(label(if (at != null) "지금 시연 위치: ${demoPlaceName ?: Regions.districtOf(at.first, at.second)?.let { fullName(it) } ?: "고른 곳"} · 누르면 그 자리로 옮기고, 그곳 안부가 있으면 바로 들려 드려요"
-            else "지금은 실제 위치(GPS)예요 · 누르면 그 자리로 옮기고, 그곳 안부가 있으면 바로 들려 드려요"))
+        root.addView(label(if (at != null) "지금 시연 위치: ${demoPlaceName ?: Regions.districtOf(at.first, at.second)?.let { fullName(it) } ?: "고른 곳"} · 누르면 그 자리로 옮기고, 그곳 메시지가 있으면 바로 들려 드려요"
+            else "지금은 실제 위치(GPS)예요 · 누르면 그 자리로 옮기고, 그곳 메시지가 있으면 바로 들려 드려요"))
         val places = visibleMessages().filter { it.isPlace && !isMine(it) }.distinctBy { it.placeName }.sortedBy { it.placeName }
-        if (places.isEmpty()) root.addView(label("나에게 온 장소 안부가 없어요"))
+        if (places.isEmpty()) root.addView(label("나에게 온 장소 메시지가 없어요"))
         places.chunked(3).forEach { line ->
             root.addView(row(*(line.map { m ->
                 (if (demoPlaceName == m.placeName) primary("● ${m.placeName}") { demoTarget = null; demoMove(m.lat, m.lon, m.placeName); render() }
@@ -3092,9 +3092,9 @@ class MainActivity : Activity(), Engine.Ui {
         root.addView(row(
             onOff("와이퍼", Engine.rainNow, "rain", "비 오는 날"),
             onOff("전조등", Engine.nightNow, "night", "밤길"),
-            // 동승은 안부를 여는 조건이 아니다: 옆자리 배려(재생 전에 묻기)를 시험하는 스위치
+            // 동승은 메시지를 여는 조건이 아니다: 옆자리 배려(재생 전에 묻기)를 시험하는 스위치
             if (Engine.passengerNow) primary("옆자리 동승 · 켜짐") { Engine.demoSignal("together", false); render() }
-            else secondary("옆자리 동승 · 꺼짐") { Engine.demoSignal("together", true); toast("옆자리에 누가 탄 것처럼 해요. 안부는 들려주기 전에 먼저 물어요"); render() },
+            else secondary("옆자리 동승 · 꺼짐") { Engine.demoSignal("together", true); toast("옆자리에 누가 탄 것처럼 해요. 메시지는 들려주기 전에 먼저 물어요"); render() },
         ))
         root.addView(row(
             secondary("2시간 넘게 달린 것처럼") { demoResult(Engine.demoSignal("long"), "오래 운전할 때") },
@@ -3102,24 +3102,16 @@ class MainActivity : Activity(), Engine.Ui {
         ))
 
         root.addView(section(R.drawable.ic_mic, "운전 중 말로 (Gleo)"))
-        root.addView(label("글레오에게 말한 것처럼 해 봐요. 「여기 저장해 줘」는 지금 자리를 저장하고, 「(모임 이름) 녹음해 줘」는 삐 소리 뒤 말한 것을 그 모임에 남겨요."))
-        root.addView(row(secondary("「여기 저장해 줘」") {
-            toast(when (Engine.saveSpot("")) {
-                Engine.SpotResult.SAVED -> "지금 자리를 저장했어요"
-                Engine.SpotResult.MERGED -> "방금 저장한 자리와 합쳤어요"
-                Engine.SpotResult.NO_LOCATION -> "아직 위치를 몰라요. 위에서 장소로 먼저 옮겨 주세요"
-                Engine.SpotResult.NOT_READY -> "모임에 들어간 뒤에 저장할 수 있어요"
-                Engine.SpotResult.NO_GROUP -> "그 모임을 찾지 못했어요"
-            })
-        }, secondary("「${circle?.name ?: "모임"} 녹음해 줘」") {
-            // 글레오에게 「다온으로 녹음해 줘」라고 한 것처럼: 안내 → 삐 → 녹음 → 지금 모임에 남기기
+        root.addView(label("글레오에게 말한 것처럼 해 봐요. 「(그룹 이름) 녹음해 줘」는 삐 소리 뒤 말한 것을 그 그룹에 남겨요."))
+        root.addView(row(secondary("「${circle?.name ?: "그룹"} 녹음해 줘」") {
+            // 글레오에게 「다온으로 녹음해 줘」라고 한 것처럼: 안내 → 삐 → 녹음 → 지금 그룹에 남기기
             if (VoiceNote.busy) toast("받는 중이에요") else VoiceNote.start(this, "", false)
         }))
 
         root.addView(section(R.drawable.ic_settings, "시연 데이터"))
-        root.addView(label("앱만으로 동작하는 시연 버전이에요. 가족·친구와 안부는 이 차 안에만 있어요. 남기기의 「보내는 사람」을 엄마·아빠 등으로 바꾸면 원우에게 온 안부처럼 시험할 수 있어요."))
+        root.addView(label("앱만으로 동작하는 시연 버전이에요. 가족·친구와 메시지는 이 차 안에만 있어요. 남기기의 「보내는 사람」을 엄마·아빠 등으로 바꾸면 용민에게 온 메시지처럼 시험할 수 있어요."))
         root.addView(row(secondary("시연 데이터로 되돌리기") {
-            confirm("시연 데이터로 되돌릴까요?", "남긴 안부·들은 기록·설정한 모임이 모두 처음 시연 상태로 돌아가요.", "되돌리기") {
+            confirm("시연 데이터로 되돌릴까요?", "남긴 메시지·들은 기록·설정한 그룹이 모두 처음 시연 상태로 돌아가요.", "되돌리기") {
                 toast("처음 상태로 되돌리는 중이에요…")
                 history.clear(); screen = Screen.HOME; demoPlaceName = null
                 Engine.resetDemo { toast("시연 데이터로 되돌렸어요"); render() }
@@ -3129,7 +3121,7 @@ class MainActivity : Activity(), Engine.Ui {
 
     // 시연: 시나리오 ------------------------------------------------------
     // 시나리오를 고르면 메인의 실제 지도로 가서, 차가 길 위를 달려 그 자리·그 순간에 닿는다.
-    // 장소·지역 안부는 엔진이 실제처럼 위치로 알아채서 열고, 차 상태 안부는 다 달린 뒤 그 신호를 넣는다.
+    // 장소·지역 메시지는 엔진이 실제처럼 위치로 알아채서 열고, 차 상태 메시지는 다 달린 뒤 그 신호를 넣는다.
 
     /**
      * mode: move = 목적지까지 달린다(위치로 열림) · drive = 잠깐 달린 뒤 fire · still = 서 있다가 fire.
@@ -3144,7 +3136,7 @@ class MainActivity : Activity(), Engine.Ui {
     private var scenPhase = ""
     private var scenResult = ""
     private var scenOpened = 0
-    /** 이번 시나리오로 열린 안부 (하나면 지도 위 안내에서 바로 「답장」) */
+    /** 이번 시나리오로 열린 메시지 (하나면 지도 위 안내에서 바로 「답장」) */
     private var scenOpenedList: List<PlaceMessage> = emptyList()
     private var scenBefore: Set<String> = emptySet()
     /** 지도 위 차 자리 (시나리오 중에만). 지도 그림의 「지금 위치」가 이것을 따른다 */
@@ -3167,19 +3159,19 @@ class MainActivity : Activity(), Engine.Ui {
         val heard = foundIds()
         val mine = visibleMessages().filter { !isMine(it) }
         fun waiting(key: String) = mine.filter { it.opensOn == key && !it.isPlace && it.id !in heard }
-        fun who(list: List<PlaceMessage>) = if (list.isEmpty()) "열 안부가 없어요 (이미 들었어요)"
-            else list.map { it.authorName }.distinct().joinToString(", ") + "의 안부 ${list.size}개"
+        fun who(list: List<PlaceMessage>) = if (list.isEmpty()) "열 메시지가 없어요 (이미 들었어요)"
+            else list.map { it.authorName }.distinct().joinToString(", ") + "의 메시지 ${list.size}개"
         val out = mutableListOf<Scen>()
         // 들은 장소 카드도 자리를 지킨다 (시연 중에 카드가 사라지면 다음에 누를 자리가 밀린다)
         mine.filter { it.isPlace && it.opensOn != "region" }.groupBy { it.placeName }.forEach { (name, list) ->
             val left = list.filter { it.id !in heard }
             val m = left.firstOrNull() ?: list.first()
-            out += Scen("place", "「$name」 지나가기", if (left.isEmpty()) "이미 들었어요" else "${m.authorName}의 안부", left.isNotEmpty(), "move", name, m.lat to m.lon)
+            out += Scen("place", "「$name」 지나가기", if (left.isEmpty()) "이미 들었어요" else "${m.authorName}의 메시지", left.isNotEmpty(), "move", name, m.lat to m.lon)
         }
         mine.filter { it.opensOn == "region" }.groupBy { it.placeName }.entries.take(1).forEach { (name, list) ->
             val left = list.filter { it.id !in heard }
             val m = left.firstOrNull() ?: list.first()
-            out += Scen("region", "「$name」에 들어서기", if (left.isEmpty()) "이미 들었어요" else "${m.authorName}의 안부", left.isNotEmpty(), "move", name, m.lat to m.lon, m.regionCode)
+            out += Scen("region", "「$name」에 들어서기", if (left.isEmpty()) "이미 들었어요" else "${m.authorName}의 메시지", left.isNotEmpty(), "move", name, m.lat to m.lon, m.regionCode)
         }
         waiting("rain").let { out += Scen("rain", "달리다 비가 오면", who(it), it.isNotEmpty(), "drive", "비가 와요 · 와이퍼가 켜졌어요") { Engine.demoSignal("rain", true) } }
         waiting("night").let { out += Scen("night", "해 지고 전조등을 켜면", who(it), it.isNotEmpty(), "drive", "해가 졌어요 · 전조등이 켜졌어요") { Engine.demoSignal("night", true) } }
@@ -3194,17 +3186,8 @@ class MainActivity : Activity(), Engine.Ui {
                 if (VoiceNote.busy) toast("받는 중이에요") else VoiceNote.start(this, g, false)
             }
         }
-        out += Scen("save", "「여기 저장해 줘」", "지금 자리만 먼저 저장 · 세우면 안부로", true, "now", "여기") {
-            toast(when (Engine.saveSpot("")) {
-                Engine.SpotResult.SAVED -> "지금 자리를 저장했어요"
-                Engine.SpotResult.MERGED -> "방금 저장한 자리와 합쳤어요"
-                Engine.SpotResult.NO_LOCATION -> "아직 위치를 몰라요. 장소 카드로 먼저 옮겨 주세요"
-                Engine.SpotResult.NOT_READY -> "모임에 들어간 뒤에 저장할 수 있어요"
-                Engine.SpotResult.NO_GROUP -> "그 모임을 찾지 못했어요"
-            })
-        }
         val riding = Engine.passengerNow
-        out += Scen("together", if (riding) "조수석에서 내리기" else "조수석에 누가 타면", if (riding) "옆자리가 비면 기다리던 안부를 들려줘요" else "가족 안부는 보낸 사람을 가리고 먼저 물어요",
+        out += Scen("together", if (riding) "조수석에서 내리기" else "조수석에 누가 타면", if (riding) "옆자리가 비면 기다리던 메시지를 들려줘요" else "가족 메시지는 보낸 사람을 가리고 먼저 물어요",
             true, "now", "옆자리") { Engine.demoSignal("together", !riding); render() }
         return out
     }
@@ -3215,8 +3198,8 @@ class MainActivity : Activity(), Engine.Ui {
             listOf("start", "long", "place:천안 휴게소", "park")),
         Triple("메인 ② 남기기 · 토요일 강릉", "우리 둘 녹음해 줘 → 강릉 → 정동진 → 세운 뒤 「메시지」에서 1년 뒤 남기기",
             listOf("record:우리 둘", "region", "place:정동진 전망대")),
-        Triple("질문이 나오면", "옆자리 배려 · 연인 · 다른 조건 · 여기 저장 · 경유지",
-            listOf("together", "place:성수동 카페 앞", "door", "rain", "night", "warning", "save", "place:우리 동네", "place:잠수교")),
+        Triple("질문이 나오면", "옆자리 배려 · 연인 · 다른 조건 · 경유지",
+            listOf("together", "place:성수동 카페 앞", "door", "rain", "night", "warning", "place:우리 동네", "place:잠수교")),
     )
 
     /** 이 시나리오의 출발점과 도착점 */
@@ -3240,7 +3223,7 @@ class MainActivity : Activity(), Engine.Ui {
     private fun runScenario(s: Scen) {
         if (scenRun != null) stopScenario(silent = true)
         if (s.mode == "now") { s.fire(); return }
-        if (!s.ready) { toast("이 시나리오로 열 안부가 없어요. 「처음 상태로」를 누르면 다시 들을 수 있어요"); return }
+        if (!s.ready) { toast("이 시나리오로 열 메시지가 없어요. 「처음 상태로」를 누르면 다시 들을 수 있어요"); return }
         if (Engine.rainNow) Engine.demoSignal("rain", false)
         if (Engine.nightNow) Engine.demoSignal("night", false)
         val (from, to) = scenRoute(s)
@@ -3284,7 +3267,7 @@ class MainActivity : Activity(), Engine.Ui {
                 scenCar = p
                 mainStyle?.getSourceAs<org.maplibre.android.style.sources.GeoJsonSource>("me")?.setGeoJson(org.maplibre.geojson.Feature.fromGeometry(org.maplibre.geojson.Point.fromLngLat(p.second, p.first)))
                 if (s.mode != "still") mainLib?.moveCamera(org.maplibre.android.camera.CameraUpdateFactory.newLatLng(org.maplibre.android.geometry.LatLng(p.first, p.second)))
-                // 엔진에는 0.4초마다 위치를 준다: 장소·지역 안부는 지나가는 순간 엔진이 스스로 연다
+                // 엔진에는 0.4초마다 위치를 준다: 장소·지역 메시지는 지나가는 순간 엔진이 스스로 연다
                 val now = System.currentTimeMillis()
                 if (s.mode == "move" && now - pushed > 400) { pushed = now; Engine.setDemoLocation(p) }
                 val left = (total * (1 - f)) / 1000
@@ -3317,9 +3300,9 @@ class MainActivity : Activity(), Engine.Ui {
             scenPhase = "done"
             // 옆자리 배려 중에는 시연 안내에도 보낸 사람을 쓰지 않는다
             val hide = Engine.passengerNow && store.askWithPassenger
-            scenResult = if (opened.isEmpty()) "열린 안부가 없어요"
-                else if (hide) "안부가 도착했어요 · 옆자리에 누가 있어 보낸 사람을 가렸어요"
-                else opened.map { it.authorName }.distinct().joinToString(", ") + "의 안부가 열렸어요"
+            scenResult = if (opened.isEmpty()) "열린 메시지가 없어요"
+                else if (hide) "메시지가 도착했어요 · 옆자리에 누가 있어 보낸 사람을 가렸어요"
+                else opened.map { it.authorName }.distinct().joinToString(", ") + "의 메시지가 열렸어요"
             if (hide) scenOpenedList = emptyList()
             drawScenHud()
         }
@@ -3377,7 +3360,7 @@ class MainActivity : Activity(), Engine.Ui {
                     stopScenario(silent = true)
                     if (playing != null) Engine.showPlayback() else Engine.playNow()
                 }, LinearLayout.LayoutParams(-2, pxu(40)).apply { marginStart = pxu(18) })
-                // 글 안부는 몇 초면 다 읽혀 재생 화면이 닫히므로, 안부가 하나 열렸으면 여기서 바로 답장한다
+                // 글 메시지는 몇 초면 다 읽혀 재생 화면이 닫히므로, 메시지가 하나 열렸으면 여기서 바로 답장한다
                 scenOpenedList.singleOrNull()?.let { m ->
                     addView(btn("답장", false) { stopScenario(silent = true); startReply(m) }, LinearLayout.LayoutParams(-2, pxu(40)).apply { marginStart = pxu(8) })
                 }
@@ -3399,7 +3382,7 @@ class MainActivity : Activity(), Engine.Ui {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             addView(miniPill("직접 조작") { demoManual = true; render() }, LinearLayout.LayoutParams(-2, dp(64)))
             addView(miniPill("처음 상태로") {
-                confirm("시연 데이터로 되돌릴까요?", "남긴 안부·들은 기록이 처음 시연 상태로 돌아가요. 들은 안부도 다시 들을 수 있어요.", "되돌리기") {
+                confirm("시연 데이터로 되돌릴까요?", "남긴 메시지·들은 기록이 처음 시연 상태로 돌아가요. 들은 메시지도 다시 들을 수 있어요.", "되돌리기") {
                     toast("처음 상태로 되돌리는 중이에요…")
                     demoPlaceName = null
                     Engine.resetDemo { toast("시연 데이터로 되돌렸어요"); render() }
@@ -3445,13 +3428,13 @@ class MainActivity : Activity(), Engine.Ui {
         setOnClickListener { runScenario(s) }
     }
 
-    /** 모임 통째로 지우기. 되돌릴 수 없어서 두 번 묻는다. */
+    /** 그룹 통째로 지우기. 되돌릴 수 없어서 두 번 묻는다. */
     private fun deleteCircle() {
         val name = circle?.name ?: return
-        confirm("「$name」을(를) 통째로 지울까요?", "모든 프로필·메시지·목소리·사진·일기와 연결된 차·폰이 지워지고 되돌릴 수 없어요.", "지우기") {
-            confirm("정말 지울까요?", "모임 사람 모두의 차와 폰에서도 「$name」이(가) 사라져요.", "통째로 지우기") {
+        confirm("「$name」 그룹을 삭제할까요?", "구성원, 메시지, 목소리, 사진과 연결된 차 정보가 모두 삭제돼요. 되돌릴 수 없어요.", "삭제") {
+            confirm("정말 삭제할까요?", "모든 구성원의 차와 폰에서 「$name」이(가) 사라져요.", "삭제") {
                 Engine.deleteCircle { err ->
-                    if (err != null) toast(err) else { toast("모임을 지웠어요"); history.clear(); screen = Screen.HOME }
+                    if (err != null) toast(err) else { toast("그룹을 지웠어요"); history.clear(); screen = Screen.HOME }
                     render()
                 }
             }
@@ -3489,7 +3472,7 @@ class MainActivity : Activity(), Engine.Ui {
         lastLoc?.let { leavePlace = Place(HERE, it.first, it.second); leaveKey = HERE } ?: run { if (leaveKey == HERE) leavePlace = null }
     }
 
-    /** 남길 모임 (고른 것이 없으면 지금 관리하는 모임) */
+    /** 남길 그룹 (고른 것이 없으면 지금 관리하는 그룹) */
     private fun leaveCircle(): Circle? = leaveCircleId?.let { Engine.circles[it] } ?: circle
 
     /** 남기기·소식 화면에서 같이 쓰는 "누구로" 고르기 */
@@ -3601,7 +3584,7 @@ class MainActivity : Activity(), Engine.Ui {
         if (leaveWhen == "region") leavePlace?.let { p ->
             root.addView(label("고른 곳이 든 지역: ${Regions.districtOf(p.lat, p.lon)?.let { fullName(it) } ?: "알 수 없음"} (그 시·군·구에 들어가면)"))
         }
-        root.addView(label("이 근처를 모임의 다른 사람이 지나가면 그 사람 차에서 들려줘요."))
+        root.addView(label("이 근처를 그룹의 다른 사람이 지나가면 그 사람 차에서 들려줘요."))
         root.addView(space(12))
         val here = lastLoc?.let { Place(HERE, it.first, it.second) }
         // 좌표가 아니라 고른 버튼으로 표시한다 (지금 자리가 예시 장소 근처여도 하나만 ✓). prefix는 이게 어떤 장소인지 알려 주는 표시.
@@ -3737,16 +3720,16 @@ class MainActivity : Activity(), Engine.Ui {
                 if (leaveWhen == "region") line("지역", Regions.districtOf(p.lat, p.lon)?.let { fullName(it) } ?: p.name)
                 else line("장소", "${p.name} · ${if (leaveRadius < 1000) "${leaveRadius}m" else "${leaveRadius / 1000}km"} 안")
             },
-            line("받는 사람", if (leaveTo.isEmpty()) "모임 모두" else leaveTo.joinToString(", ") { c.nameOf(it) }),
+            line("받는 사람", if (leaveTo.isEmpty()) "그룹 모두" else leaveTo.joinToString(", ") { c.nameOf(it) }),
             line("내용", if (recorder.hasRecording) "목소리 메시지" else "“$leaveText”"),
         )))
-        // 어떤 조건이든 같은 8개: 받는 사람 · 시간대 · 요일 · 언제부터 / 언제까지 · 횟수 · 모임 · 보내는 사람
+        // 어떤 조건이든 같은 8개: 받는 사람 · 시간대 · 요일 · 언제부터 / 언제까지 · 횟수 · 그룹 · 보내는 사람
         val hours = hoursFor(leaveWhen)
         if (hours.none { it.first == leaveHours }) leaveHours = "any"
         root.addView(row(
             secondary("받는 사람") {
                 val others = c.members.filter { it.id != author }
-                pickFrom("누구에게 남길까요?", listOf("모임 모두") + others.map { it.name }) { i -> leaveTo = if (i == 0) emptyList() else listOf(others[i - 1].id); render() }
+                pickFrom("누구에게 남길까요?", listOf("그룹 모두") + others.map { it.name }) { i -> leaveTo = if (i == 0) emptyList() else listOf(others[i - 1].id); render() }
             },
             secondary("시간: ${WHEN_HOURS.first { it.first == leaveHours }.second}") {
                 val why = if (leaveWhen == "night") " (밤길이라 아침은 빼요)" else ""
@@ -3766,10 +3749,10 @@ class MainActivity : Activity(), Engine.Ui {
             secondary("횟수: ${REPEATS.first { it.first == leaveRepeat }.second}") {
                 pickFrom("몇 번 들려줄까요?", REPEATS.map { it.second }) { i -> leaveRepeat = REPEATS[i].first; render() }
             },
-            secondary("모임: ${c.name}") {
+            secondary("그룹: ${c.name}") {
                 val list = store.liveMemberships.mapNotNull { Engine.circles[it.circleId] }
-                if (list.size < 2) toast("다른 모임에도 들어가면 여기서 고를 수 있어요")
-                else pickFrom("어느 모임에 남길까요?", list.map { it.name }) { i -> leaveCircleId = list[i].id; leaveAuthor = store.ownerOf(list[i].id); render() }
+                if (list.size < 2) toast("다른 그룹에도 들어가면 여기서 고를 수 있어요")
+                else pickFrom("어느 그룹에 남길까요?", list.map { it.name }) { i -> leaveCircleId = list[i].id; leaveAuthor = store.ownerOf(list[i].id); render() }
             },
             secondary("보내는 사람: ${if (author != null) c.nameOf(author) else "고르기"}") { pickAuthor(c) },
         ))
@@ -3777,7 +3760,7 @@ class MainActivity : Activity(), Engine.Ui {
         root.addView(primary(if (sending) "보내는 중…" else "남기기") { if (ready) sendLeave(c, author!!) }.apply { alpha = if (ready) 1f else 0.4f },
             LinearLayout.LayoutParams(-1, dp(120)).apply { bottomMargin = dp(8) })
         root.addView(label(if (author == null) "보내는 사람을 골라 주세요."
-            else "${if (leaveTo.isEmpty()) "모임의 다른 사람" else leaveTo.joinToString(", ") { c.nameOf(it) } + "님"} 차에서 들려줘요. ${c.nameOf(author)}님 차에서는 재생되지 않아요."))
+            else "${if (leaveTo.isEmpty()) "그룹의 다른 사람" else leaveTo.joinToString(", ") { c.nameOf(it) } + "님"} 차에서 들려줘요. ${c.nameOf(author)}님 차에서는 재생되지 않아요."))
     }
 
     /**
@@ -3793,7 +3776,7 @@ class MainActivity : Activity(), Engine.Ui {
         val toName = if (leaveTo.isEmpty()) "${c.name} 모두" else leaveTo.joinToString(", ") { c.nameOf(it) }
 
         // 머리: 누구에게 (그룹 · 받는 사람)
-        root.addView(pageHead(if (reply != null) "${reply.authorName}님에게 답장" else null, "안부 남기기", null,
+        root.addView(pageHead(if (reply != null) "${reply.authorName}님에게 답장" else null, "메시지 남기기", null,
             right = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
                 val joined = store.liveMemberships.mapNotNull { Engine.circles[it.circleId] }
@@ -3856,8 +3839,8 @@ class MainActivity : Activity(), Engine.Ui {
             addView(icon(R.drawable.ic_mic, 34, ACCENT), android.widget.FrameLayout.LayoutParams(dp(36), dp(36), Gravity.CENTER))
         }, LinearLayout.LayoutParams(dp(72), dp(72)).apply { marginEnd = dp(20) })
         addView(column().apply {
-            addView(text("운전 중엔 모임 이름을 말하고 「녹음해 줘」", 23f, INK, weight = 700))
-            addView(text("① “글레오” → 띠링 → ② “${Engine.groupNames().firstOrNull() ?: "모임 이름"} 녹음해 줘” → ③ 삐 소리 뒤 남길 말", 20f, MUTED).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(4), 0, 0) })
+            addView(text("운전 중엔 그룹 이름을 말하고 「녹음해 줘」", 23f, INK, weight = 700))
+            addView(text("① “글레오” → 띠링 → ② “${Engine.groupNames().firstOrNull() ?: "그룹 이름"} 녹음해 줘” → ③ 삐 소리 뒤 남길 말", 20f, MUTED).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(4), 0, 0) })
             // 운전 중에는 목소리 그대로만 남긴다. 글(기계음)로 남기기는 정차 중 이 메시지 화면에서 (말로 적기 · 글로 쓰기)
             addView(text("내 목소리 그대로 남아요 · 말을 멈추면 저절로 끝나고 소리로 알려 줘요 · 글로 남기려면 위에서", 18f, MUTED).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(2), 0, 0) })
         }, LinearLayout.LayoutParams(0, -2, 1f))
@@ -3900,7 +3883,7 @@ class MainActivity : Activity(), Engine.Ui {
                 box.addView(LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(14), 0, 0)
                     val white = { v: TextView -> v.background = pressable(GradientDrawable().apply { setColor(CARD); cornerRadius = dp(28).toFloat() }) }
-                    addView(miniPill("고치기") { askText("안부 (${MAX_TEXT}자까지)", leaveText, multiline = true, maxLength = MAX_TEXT) { leaveText = it; recorder.clear(); render() } }.apply { (layoutParams as LinearLayout.LayoutParams).marginStart = 0; white(this) })
+                    addView(miniPill("고치기") { askText("메시지 (${MAX_TEXT}자까지)", leaveText, multiline = true, maxLength = MAX_TEXT) { leaveText = it; recorder.clear(); render() } }.apply { (layoutParams as LinearLayout.LayoutParams).marginStart = 0; white(this) })
                     addView(miniPill("지우기") { leaveText = ""; render() }.apply { white(this) })
                 })
             }
@@ -3923,7 +3906,7 @@ class MainActivity : Activity(), Engine.Ui {
                 else pill(if (recorder.hasRecording) "다시 녹음" else "목소리 녹음", dark = false, heightDp = 88) { if (recordTapOk()) startRecording() }
             addView(rec, LinearLayout.LayoutParams(0, dp(88), 1f).apply { marginStart = dp(12) })
             addView(pill("키보드", dark = false, heightDp = 88) {
-                askText("안부 (${MAX_TEXT}자까지)", leaveText, multiline = true, maxLength = MAX_TEXT) { leaveText = it; recorder.clear(); render() }
+                askText("메시지 (${MAX_TEXT}자까지)", leaveText, multiline = true, maxLength = MAX_TEXT) { leaveText = it; recorder.clear(); render() }
             }, LinearLayout.LayoutParams(0, dp(88), 0.8f).apply { marginStart = dp(12) })
         })
     }
@@ -4000,7 +3983,7 @@ class MainActivity : Activity(), Engine.Ui {
             ), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
             addView(pillRow(
                 miniPill("시작 · ${WHEN_FROM.first { it.first == leaveFrom }.second}") {
-                    pickFrom("이 안부를 언제부터 들을 수 있게 할까요?", WHEN_FROM.map { it.second }) { i -> leaveFrom = WHEN_FROM[i].first; render() }
+                    pickFrom("이 메시지를 언제부터 들을 수 있게 할까요?", WHEN_FROM.map { it.second }) { i -> leaveFrom = WHEN_FROM[i].first; render() }
                 },
                 miniPill("끝 · ${WHEN_UNTIL.first { it.first == leaveUntil }.second}") {
                     pickFrom("언제 사라지게 할까요? 시작한 날부터 셉니다", WHEN_UNTIL.map { it.second }) { i -> leaveUntil = WHEN_UNTIL[i].first; render() }
@@ -4194,7 +4177,7 @@ class MainActivity : Activity(), Engine.Ui {
     }
 
     private fun togglePreview() {
-        if (playing != null) return // 안부가 나오는 중에는 겹쳐 틀지 않는다
+        if (playing != null) return // 메시지가 나오는 중에는 겹쳐 틀지 않는다
         val p = openPreview() ?: return
         if (p.isPlaying) p.pause() else p.start()
         root.removeCallbacks(previewTick)
@@ -4276,7 +4259,7 @@ class MainActivity : Activity(), Engine.Ui {
 
     private fun loadFeed() = Engine.loadFeed()
 
-    /** 모임 소식: 사람마다 카드 하나 (오늘 들은 수 · 최근 들은 것 · 오늘 일기), 아래에 내가 남긴 메시지 */
+    /** 그룹 소식: 사람마다 카드 하나 (오늘 들은 수 · 최근 들은 것 · 오늘 일기), 아래에 내가 남긴 메시지 */
     // 하늘 스킨 화면 (오늘 · 소식) ---------------------------------------------------------
     // 메인과 같은 말투로: 큰 제목 하나, 큰 카드 하나에 할 일 하나, 3D 그림은 칸 안에.
 
@@ -4338,7 +4321,7 @@ class MainActivity : Activity(), Engine.Ui {
 
     private fun memberOf(m: PlaceMessage) = Engine.circles[m.circleId]?.member(m.authorId) ?: circle?.member(m.authorId)
 
-    /** 오늘: 오늘 온 안부(모아 듣기·기다리는 안부) · 가까운 안부 · 발견한 안부 · 모임 소식 */
+    /** 오늘: 오늘 온 메시지(모아 듣기·기다리는 메시지) · 가까운 메시지 · 발견한 메시지 · 그룹 소식 */
     private fun renderTodaySky() {
         val driver = circle?.member(store.driverId)?.let { if (it.title.isNotBlank() && circle?.type == "family") it.title else "${it.name}님" }
         val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
@@ -4346,7 +4329,7 @@ class MainActivity : Activity(), Engine.Ui {
         val total = viewHeardToday().size + viewPending().size
         val states = listOfNotNull(todayLabel(), "정차 중", "비".takeIf { Engine.rainNow }, "밤길".takeIf { Engine.nightNow }, "서버 연결 안 됨".takeIf { !serverOk })
         root.addView(pageHead(states.joinToString(" · "), if (driver != null) "$driver, $hello" else "안녕하세요",
-            if (total == 0) "오늘은 아직 온 안부가 없어요" else "오늘 안부 ${total}개가 왔어요",
+            if (total == 0) "오늘은 아직 온 메시지가 없어요" else "오늘 메시지 ${total}개가 왔어요",
             right = circleSwitch { render() }))
 
         // 왼쪽: 큰 카드 하나 + 작은 카드 둘
@@ -4365,7 +4348,7 @@ class MainActivity : Activity(), Engine.Ui {
         }, LinearLayout.LayoutParams(-1, 0, 1f))
     }
 
-    /** 오늘 온 안부: 얼굴 · 개수 · 모아 듣기. 기다리는 안부가 있으면 아래에 「지금 듣기」 */
+    /** 오늘 온 메시지: 얼굴 · 개수 · 모아 듣기. 기다리는 메시지가 있으면 아래에 「지금 듣기」 */
     private fun todayHero() = panel().apply {
         setPadding(dp(36), dp(32), dp(36), dp(32))
         val heardToday = viewHeardToday()
@@ -4377,7 +4360,7 @@ class MainActivity : Activity(), Engine.Ui {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             addView(column().apply {
-                addView(text("오늘 받은 안부", 22f, MUTED, weight = 600))
+                addView(text("오늘 받은 메시지", 22f, MUTED, weight = 600))
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
@@ -4387,7 +4370,7 @@ class MainActivity : Activity(), Engine.Ui {
                     addView(text(if (total == 0) "0개" else "${total}개", 56f, INK, weight = 800).apply { letterSpacing = -0.02f })
                 })
                 addView(text(when {
-                    total == 0 -> "안부를 남긴 곳을 지나면 여기에 모여요"
+                    total == 0 -> "메시지를 남긴 곳을 지나면 여기에 모여요"
                     hide -> "옆자리에 누가 있어 보낸 사람은 가려 두었어요"
                     else -> who.joinToString(", ") { "${it.first}님" } + "이 남겼어요"
                 }, 22f, MUTED))
@@ -4395,7 +4378,7 @@ class MainActivity : Activity(), Engine.Ui {
             val can = total > 0 && store.driverId != null
             addView(pill("▶  모아 듣기", dark = true, heightDp = 96) { if (can) Engine.playToday(viewCircle) }.apply { alpha = if (can) 1f else 0.35f })
         })
-        // 기다리는 안부
+        // 기다리는 메시지
         val m = pending.firstOrNull() ?: return@apply
         addView(View(context).apply { setBackgroundColor(BORDER) }, LinearLayout.LayoutParams(-1, dp(1)).apply { topMargin = dp(24); bottomMargin = dp(20) })
         addView(LinearLayout(context).apply {
@@ -4404,7 +4387,7 @@ class MainActivity : Activity(), Engine.Ui {
             if (hide) {
                 addView(tile3d(R.drawable.cd_together, skyTile, 64, 46), LinearLayout.LayoutParams(dp(64), dp(64)).apply { marginEnd = dp(18) })
                 addView(column().apply {
-                    addView(text("안부가 도착했어요", 26f, INK, bold = true))
+                    addView(text("메시지가 도착했어요", 26f, INK, bold = true))
                     addView(text(if (Engine.askingPassenger) "지금 들을까요? 다음에 들어도 돼요" else "${pending.size}개 · 원할 때 언제든 들을 수 있어요", 20f, MUTED))
                 }, LinearLayout.LayoutParams(0, -2, 1f))
                 if (Engine.askingPassenger) addView(pill("다음에", dark = false, heightDp = 72) { Engine.passengerLater() }.apply {
@@ -4413,7 +4396,7 @@ class MainActivity : Activity(), Engine.Ui {
                 addView(tile3d(condArt[m.opensOn] ?: R.drawable.ic3_pin, if (NIGHT) skyTile else Color.parseColor(condTint[m.opensOn] ?: "#EEF2FF"), 64, 46),
                     LinearLayout.LayoutParams(dp(64), dp(64)).apply { marginEnd = dp(18) })
                 addView(column().apply {
-                    addView(text("기다리는 안부 ${pending.size}개", 20f, ACCENT, weight = 700))
+                    addView(text("기다리는 메시지 ${pending.size}개", 20f, ACCENT, weight = 700))
                     addView(text("${m.authorName}님이 ${m.occasion} 남겼어요", 26f, INK, bold = true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
                 }, LinearLayout.LayoutParams(0, -2, 1f))
             }
@@ -4425,7 +4408,7 @@ class MainActivity : Activity(), Engine.Ui {
         })
     }
 
-    /** 이런 순간에 열려요: 상황 조건으로 기다리는 안부를 3D 그림과 개수로 */
+    /** 이런 순간에 열려요: 상황 조건으로 기다리는 메시지를 3D 그림과 개수로 */
     private fun momentsCard() = panel().apply {
         setPadding(dp(30), dp(26), dp(30), dp(22))
         val ids = foundIds()
@@ -4433,7 +4416,7 @@ class MainActivity : Activity(), Engine.Ui {
         val waiting = visibleMessages().filter { !isMine(it) && !it.isPlace && it.id !in ids }.groupBy { it.opensOn }
             .entries.sortedBy { order.indexOf(it.key) }
         addView(text("이런 순간에 열려요", 26f, INK, bold = true))
-        addView(text(if (waiting.isEmpty()) "상황에 맞춰 기다리는 안부가 없어요" else "기다리는 안부 ${waiting.sumOf { it.value.size }}개", 20f, MUTED).apply { setPadding(0, 0, 0, dp(12)) })
+        addView(text(if (waiting.isEmpty()) "상황에 맞춰 기다리는 메시지가 없어요" else "기다리는 메시지 ${waiting.sumOf { it.value.size }}개", 20f, MUTED).apply { setPadding(0, 0, 0, dp(12)) })
         val name = WHEN_OPTIONS.toMap()
         waiting.take(6).chunked(3).forEach { row ->
             addView(LinearLayout(context).apply {
@@ -4457,16 +4440,16 @@ class MainActivity : Activity(), Engine.Ui {
         }
     }
 
-    /** 가장 가까운 안부 (아직 못 들은 곳). 누르면 지도 */
+    /** 가장 가까운 메시지 (아직 못 들은 곳). 누르면 지도 */
     private fun nearCard() = panel().apply {
         setPadding(dp(30), dp(28), dp(30), dp(28))
         val loc = lastLoc
         val found = foundIds()
         val near = loc?.let { l -> visibleMessages().filter { it.isPlace && !isMine(it) && it.id !in found }.minByOrNull { distanceM(l.first, l.second, it.lat, it.lon) } }
         addView(tile3d(R.drawable.ic3_pin, if (NIGHT) skyTile else Color.parseColor("#FDECEE"), 76, 56), LinearLayout.LayoutParams(dp(76), dp(76)).apply { bottomMargin = dp(18) })
-        addView(text("가장 가까운 안부", 22f, MUTED, weight = 600))
+        addView(text("가장 가까운 메시지", 22f, MUTED, weight = 600))
         if (near == null || loc == null) {
-            addView(text(if (loc == null) "위치를 확인하는 중" else "근처에 남은 안부가 없어요", 28f, INK, bold = true).apply { setPadding(0, dp(6), 0, 0) })
+            addView(text(if (loc == null) "위치를 확인하는 중" else "근처에 남은 메시지가 없어요", 28f, INK, bold = true).apply { setPadding(0, dp(6), 0, 0) })
         } else {
             val d = distanceM(loc.first, loc.second, near.lat, near.lon)
             addView(text(near.placeName, 28f, INK, bold = true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(6), 0, 0) })
@@ -4476,12 +4459,12 @@ class MainActivity : Activity(), Engine.Ui {
         setOnClickListener { goTab(Screen.HOME) }
     }
 
-    /** 발견한 안부: 모임 사람들이 나에게 남긴 것 중 들은 수 */
+    /** 발견한 메시지: 그룹 사람들이 나에게 남긴 것 중 들은 수 */
     private fun foundCard() = panel().apply {
         setPadding(dp(30), dp(28), dp(30), dp(28))
         val (found, total) = discoveryCount()
         addView(tile3d(R.drawable.cd_region, if (NIGHT) skyTile else Color.parseColor("#E3F4FD"), 76, 56), LinearLayout.LayoutParams(dp(76), dp(76)).apply { bottomMargin = dp(18) })
-        addView(text("발견한 안부", 22f, MUTED, weight = 600))
+        addView(text("발견한 메시지", 22f, MUTED, weight = 600))
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.BOTTOM
@@ -4494,20 +4477,20 @@ class MainActivity : Activity(), Engine.Ui {
         setOnClickListener { goTab(Screen.HOME) }
     }
 
-    /** 모임 소식: 사람마다 한 줄. 소식이 없어도 사람은 보인다 */
+    /** 그룹 소식: 사람마다 한 줄. 소식이 없어도 사람은 보인다 */
     private fun peopleCard() = panel().apply {
         setPadding(dp(30), dp(28), dp(30), dp(20))
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             val vc = viewCircle?.let { Engine.circles[it] }
-            addView(text(vc?.name ?: "모임 소식", 26f, INK, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
-            // 소식 화면은 관리 중인 모임 것이라, 다른 모임을 보고 있으면 「전체 보기」를 두지 않는다
+            addView(text(vc?.name ?: "그룹 소식", 26f, INK, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
+            // 소식 화면은 관리 중인 그룹 것이라, 다른 그룹을 보고 있으면 「전체 보기」를 두지 않는다
             if (vc == null || vc.id == circle?.id) addView(text("전체 보기 ›", 20f, ACCENT, weight = 600).apply { isClickable = true; setOnClickListener { openFeed() } })
             setPadding(0, 0, 0, dp(8))
         })
         val list = people(viewCircle?.let { Engine.circles[it] } ?: circle)
-        if (list.isEmpty()) { addView(text("모임에 사람이 들어오면 여기에 보여요", 22f, MUTED)); return@apply }
+        if (list.isEmpty()) { addView(text("그룹에 사람이 들어오면 여기에 보여요", 22f, MUTED)); return@apply }
         list.take(6).forEachIndexed { i, p ->
             if (i > 0) addView(View(context).apply { setBackgroundColor(BORDER) }, LinearLayout.LayoutParams(-1, dp(1)))
             addView(LinearLayout(context).apply {
@@ -4526,14 +4509,14 @@ class MainActivity : Activity(), Engine.Ui {
         setOnClickListener { openFeed() }
     }
 
-    /** 소식: 왼쪽 사람 카드, 오른쪽 내가 남긴 안부 (들었는지 · 답장 · 고치기·지우기) */
+    /** 소식: 왼쪽 사람 카드, 오른쪽 내가 남긴 메시지 (들었는지 · 답장 · 고치기·지우기) */
     private fun renderFeedSky() {
         val c = circle
         val me = store.driverId
         val list = people()
         val heardPeople = list.count { it.todayCount > 0 }
-        root.addView(pageHead(c?.name, "모임 소식",
-            if (list.isEmpty()) "아직 소식이 없어요" else if (heardPeople == 0) "오늘은 아직 아무도 안부를 듣지 않았어요" else "오늘 ${heardPeople}명이 안부를 들었어요",
+        root.addView(pageHead(c?.name, "그룹 소식",
+            if (list.isEmpty()) "아직 소식이 없어요" else if (heardPeople == 0) "오늘은 아직 아무도 메시지를 듣지 않았어요" else "오늘 ${heardPeople}명이 메시지를 들었어요",
             right = pill("새로 고침", dark = false, heightDp = 64) { refreshMessages(); loadFeed() }))
 
         val left = column()
@@ -4544,12 +4527,12 @@ class MainActivity : Activity(), Engine.Ui {
                 if (pair.size == 1) addView(View(context), LinearLayout.LayoutParams(0, 1, 1f).apply { marginStart = dp(16) })
             }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(16) })
         }
-        if (list.isEmpty()) left.addView(panel().apply { addView(text("모임에 사람이 들어오면 여기에 보여요", 24f, MUTED)) })
-        // 최근 주고받은 안부: 누가 누구의 어떤 안부를 언제 들었는지 (모든 모임, 최근 8개)
+        if (list.isEmpty()) left.addView(panel().apply { addView(text("그룹에 사람이 들어오면 여기에 보여요", 24f, MUTED)) })
+        // 최근 주고받은 메시지: 누가 누구의 어떤 메시지를 언제 들었는지 (모든 그룹, 최근 8개)
         val recent = feedHeard.sortedByDescending { it.lastAt }.take(8)
         if (recent.isNotEmpty()) left.addView(panel().apply {
             setPadding(dp(30), dp(26), dp(30), dp(14))
-            addView(text("최근 주고받은 안부", 26f, INK, bold = true).apply { setPadding(0, 0, 0, dp(6)) })
+            addView(text("최근 주고받은 메시지", 26f, INK, bold = true).apply { setPadding(0, 0, 0, dp(6)) })
             recent.forEachIndexed { i, h ->
                 if (i > 0) addView(View(context).apply { setBackgroundColor(BORDER) }, LinearLayout.LayoutParams(-1, dp(1)))
                 val listener = Engine.circles.values.firstNotNullOfOrNull { it.member(h.memberId) }
@@ -4560,7 +4543,7 @@ class MainActivity : Activity(), Engine.Ui {
                     setPadding(0, dp(12), 0, dp(12))
                     addView(avatar(h.memberName, 48, member = listener), LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(14) })
                     val whose = if (h.authorId == me) "내" else "${author?.name ?: "누군가"}님의"
-                    addView(text("${h.memberName}님이 $whose ${h.placeLabel} 안부를 들었어요", 21f, if (h.authorId == me) INK else MUTED, bold = h.authorId == me).apply {
+                    addView(text("${h.memberName}님이 $whose ${h.placeLabel} 메시지를 들었어요", 21f, if (h.authorId == me) INK else MUTED, bold = h.authorId == me).apply {
                         maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }, LinearLayout.LayoutParams(0, -2, 1f))
                     addView(text(whenLabel(h.lastAt), 18f, MUTED).apply { setPadding(dp(12), 0, 0, 0) })
                 })
@@ -4569,23 +4552,23 @@ class MainActivity : Activity(), Engine.Ui {
 
         val right = panel().apply { setPadding(dp(30), dp(28), dp(30), dp(24)) }
         val mine = if (me != null) messages.filter { it.authorId == me } else emptyList()
-        right.addView(text("내가 남긴 안부 ${mine.size}개", 26f, INK, bold = true).apply { setPadding(0, 0, 0, dp(10)) })
+        right.addView(text("내가 남긴 메시지 ${mine.size}개", 26f, INK, bold = true).apply { setPadding(0, 0, 0, dp(10)) })
         if (mine.isEmpty()) {
             right.addView(column().apply {
                 gravity = Gravity.CENTER_HORIZONTAL
                 setPadding(0, dp(40), 0, dp(30))
                 addView(tile3d(R.drawable.cd_door, if (NIGHT) skyTile else Color.parseColor("#FFF1E6"), 120, 88))
-                addView(text("아직 남긴 안부가 없어요", 26f, INK, bold = true).apply { gravity = Gravity.CENTER; setPadding(0, dp(22), 0, 0) })
+                addView(text("아직 남긴 메시지가 없어요", 26f, INK, bold = true).apply { gravity = Gravity.CENTER; setPadding(0, dp(22), 0, 0) })
                 addView(text("가족이 지나갈 곳이나 비 오는 날에\n들려줄 말을 남겨 보세요", 21f, MUTED).apply { gravity = Gravity.CENTER })
                 addView(space(22))
-                addView(pill("안부 남기기", dark = true) { goTab(Screen.LEAVE) })
+                addView(pill("메시지 남기기", dark = true) { goTab(Screen.LEAVE) })
             }, LinearLayout.LayoutParams(-1, -2))
         } else if (c != null && me != null) mine.forEachIndexed { i, m ->
             if (i > 0) right.addView(View(this).apply { setBackgroundColor(BORDER) }, LinearLayout.LayoutParams(-1, dp(1)))
             right.addView(myNoteRow(m, c, me))
         }
 
-        // 오른쪽 위: 발견한 안부 (예전 「오늘」 메뉴에서 옮김)
+        // 오른쪽 위: 발견한 메시지 (예전 「오늘」 메뉴에서 옮김)
         val rightCol = column()
         rightCol.addView(discoveryPanel(), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(18) })
         rightCol.addView(right, LinearLayout.LayoutParams(-1, -2))
@@ -4597,7 +4580,7 @@ class MainActivity : Activity(), Engine.Ui {
         }, LinearLayout.LayoutParams(-1, -2))
     }
 
-    /** 발견한 안부: 나에게 온 안부 중 들은 수 · 진행 막대 · 내가 남긴 곳. 메인에서 고른 그룹을 따른다 */
+    /** 발견한 메시지: 나에게 온 메시지 중 들은 수 · 진행 막대 · 내가 남긴 곳. 메인에서 고른 그룹을 따른다 */
     private fun discoveryPanel() = panel().apply {
         setPadding(dp(30), dp(26), dp(30), dp(24))
         val (found, total) = discoveryCount()
@@ -4605,7 +4588,7 @@ class MainActivity : Activity(), Engine.Ui {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             addView(tile3d(R.drawable.cd_region, if (NIGHT) skyTile else Color.parseColor("#E3F4FD"), 72, 52), LinearLayout.LayoutParams(dp(72), dp(72)).apply { marginEnd = dp(20) })
             addView(column().apply {
-                addView(text("발견한 안부" + (viewCircle?.let { Engine.circles[it]?.name }?.let { " · $it" } ?: ""), 22f, MUTED, weight = 600))
+                addView(text("발견한 메시지" + (viewCircle?.let { Engine.circles[it]?.name }?.let { " · $it" } ?: ""), 22f, MUTED, weight = 600))
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL; gravity = Gravity.BOTTOM
                     addView(text("$found", 40f, INK, weight = 800))
@@ -4630,7 +4613,7 @@ class MainActivity : Activity(), Engine.Ui {
             addView(avatar(p.member.name, 76, member = p.member), LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(18) })
             addView(column().apply {
                 addView(text(p.member.name + if (p.member.title.isNotBlank() && p.member.title != p.member.name) " · ${p.member.title}" else "", 28f, INK, bold = true))
-                addView(text(if (p.todayCount > 0) "오늘 안부 ${p.todayCount}개를 들었어요" else "오늘은 아직 조용해요", 21f, if (p.todayCount > 0) ACCENT else MUTED, weight = 600))
+                addView(text(if (p.todayCount > 0) "오늘 메시지 ${p.todayCount}개를 들었어요" else "오늘은 아직 조용해요", 21f, if (p.todayCount > 0) ACCENT else MUTED, weight = 600))
             }, LinearLayout.LayoutParams(0, -2, 1f))
         })
         if (p.recent.isNotEmpty()) addView(space(10))
@@ -4642,7 +4625,7 @@ class MainActivity : Activity(), Engine.Ui {
                 setPadding(0, dp(8), 0, 0)
                 addView(View(context).apply { background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(if (mineH) ACCENT else BORDER) } },
                     LinearLayout.LayoutParams(dp(10), dp(10)).apply { marginEnd = dp(12) })
-                addView(text("${if (mineH) "내" else "${c?.nameOf(h.authorId) ?: ""}님의"} ${h.placeLabel} 안부", 20f, if (mineH) INK else MUTED, bold = mineH).apply {
+                addView(text("${if (mineH) "내" else "${c?.nameOf(h.authorId) ?: ""}님의"} ${h.placeLabel} 메시지", 20f, if (mineH) INK else MUTED, bold = mineH).apply {
                     maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }, LinearLayout.LayoutParams(0, -2, 1f))
                 addView(text(whenLabel(h.lastAt), 18f, MUTED))
             })
@@ -4650,18 +4633,18 @@ class MainActivity : Activity(), Engine.Ui {
         p.diary?.let { addView(text(it.text.lines().first(), 20f, MUTED).apply { setPadding(0, dp(12), 0, 0); maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }) }
     }
 
-    // 내가 남긴 안부 들어 보기 ------------------------------------------------------
+    // 내가 남긴 메시지 들어 보기 ------------------------------------------------------
 
-    /** 지금 들어 보는 내 안부 (다시 누르면 멈춘다) */
+    /** 지금 들어 보는 내 메시지 (다시 누르면 멈춘다) */
     private var minePlayingId: String? = null
     private var minePlayer: android.media.MediaPlayer? = null
 
     /**
-     * 내가 남긴 안부를 내가 들어 본다: 목소리는 녹음 그대로, 글은 받는 차에서처럼 기계음으로.
-     * 「들었어요」는 보내지 않는다. 받은 안부가 나오는 중이면 겹쳐 틀지 않는다.
+     * 내가 남긴 메시지를 내가 들어 본다: 목소리는 녹음 그대로, 글은 받는 차에서처럼 기계음으로.
+     * 「들었어요」는 보내지 않는다. 받은 메시지가 나오는 중이면 겹쳐 틀지 않는다.
      */
     private fun playMine(m: PlaceMessage) {
-        if (playing != null) { toast("안부가 나오는 중이에요"); return }
+        if (playing != null) { toast("메시지가 나오는 중이에요"); return }
         val again = minePlayingId == m.id
         stopMine()
         if (again) { render(); return }
@@ -4677,7 +4660,7 @@ class MainActivity : Activity(), Engine.Ui {
                 mp.setOnErrorListener { _, _, _ -> if (minePlayer === mp) { stopMine(); toast("녹음을 틀지 못했어요"); render() }; true }
                 mp.setOnPreparedListener { it.start() }
                 mp.prepareAsync()
-            }.onFailure { Log.d("내 안부 듣기 실패: $it"); stopMine(); toast("녹음을 틀지 못했어요") }
+            }.onFailure { Log.d("내 메시지 듣기 실패: $it"); stopMine(); toast("녹음을 틀지 못했어요") }
         } else {
             Engine.speakThen(m.text) { if (minePlayingId == m.id) { minePlayingId = null; render() } }
         }
@@ -4693,7 +4676,7 @@ class MainActivity : Activity(), Engine.Ui {
 
     private fun mineLabel(m: PlaceMessage) = if (minePlayingId == m.id) "■ 멈춤" else "▶ 듣기"
 
-    /** 내가 남긴 안부 한 줄: 조건 그림 · 내용 · 받는 사람 · 상태 표시 · 듣기/고치기/지우기 */
+    /** 내가 남긴 메시지 한 줄: 조건 그림 · 내용 · 받는 사람 · 상태 표시 · 듣기/고치기/지우기 */
     private fun myNoteRow(m: PlaceMessage, c: Circle, me: String) = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         setPadding(0, dp(16), 0, dp(16))
@@ -4704,7 +4687,7 @@ class MainActivity : Activity(), Engine.Ui {
             if (NIGHT) skyTile else Color.parseColor(condTint[if (m.isPlace) "place" else m.opensOn] ?: "#EEF2FF"), 60, 44),
             LinearLayout.LayoutParams(dp(60), dp(60)).apply { marginEnd = dp(16) })
         addView(column().apply {
-            addView(text(if (m.kind == "voice") "목소리 안부" else "「${m.text}」", 23f, INK, bold = true).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END })
+            addView(text(if (m.kind == "voice") "목소리 메시지" else "「${m.text}」", 23f, INK, bold = true).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END })
             addView(text("${toNames}에게 · ${m.occasion}", 19f, MUTED).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -4727,7 +4710,7 @@ class MainActivity : Activity(), Engine.Ui {
                 addView(text("지우기", 19f, MUTED, weight = 600).apply {
                     setPadding(dp(14), dp(6), dp(4), dp(6)); isClickable = true
                     setOnClickListener {
-                        confirm("${m.placeName} 안부를 지울까요?", "들은 기록도 함께 지워져요.", "지우기") {
+                        confirm("${m.placeName} 메시지를 지울까요?", "들은 기록도 함께 지워져요.", "지우기") {
                             Api.deleteMessage(m.id, me) { ok -> if (ok) { refreshMessages(); loadFeed() } else toast("지우지 못했어요") }
                         }
                     }
@@ -4740,7 +4723,7 @@ class MainActivity : Activity(), Engine.Ui {
         if (SKY_SKIN) { renderFeedSky(); return }
         val c = circle
         val me = store.driverId
-        root.addView(title("모임 소식"))
+        root.addView(title("그룹 소식"))
         val list = people()
         if (list.isEmpty()) root.addView(label("아직 소식이 없어요"))
         list.chunked(2).forEach { pair ->
@@ -4823,7 +4806,7 @@ class MainActivity : Activity(), Engine.Ui {
         return "가장 가까운 메시지 장소: ${near.placeName} $dist · 위치는 이 차 안에서만 써요"
     }
 
-    /** 모임(그룹) 관리는 왼쪽 메뉴의 「그룹」 */
+    /** 그룹(그룹) 관리는 왼쪽 메뉴의 「그룹」 */
     private fun openMembers() = goTab(Screen.GROUPS)
 
     private fun loadCars() = Api.cars { list ->
@@ -4833,22 +4816,22 @@ class MainActivity : Activity(), Engine.Ui {
     }
 
     /**
-     * 모임 관리: 모임 이름·종류, 구성원(이름·호칭·얼굴 색·순서·빼기), 모임의 차(주인·이름·빼기).
-     * 폰 웹의 「모임」 탭과 같은 일을 차에서 한다. 정차 중에만 열린다.
+     * 그룹 관리: 그룹 이름·종류, 구성원(이름·호칭·얼굴 색·순서·빼기), 그룹의 차(주인·이름·빼기).
+     * 폰 웹의 「그룹」 탭과 같은 일을 차에서 한다. 정차 중에만 열린다.
      */
     private fun renderMembers() {
         val c = circle
-        root.addView(title("모임 관리"))
+        root.addView(title("그룹 관리"))
         if (c == null) {
             root.addView(label("서버에 연결되면 관리할 수 있어요."))
             return
         }
         root.addView(row(
-            secondary("모임 이름: ${c.name}") {
-                askText("모임 이름", c.name, suggestions = CIRCLE_NAME_HINTS.getValue(c.type)) { name -> Api.updateCircle(c.id, name = name, done = ::onCircleChanged) }
+            secondary("그룹 이름: ${c.name}") {
+                askText("그룹 이름", c.name, suggestions = CIRCLE_NAME_HINTS.getValue(c.type)) { name -> Api.updateCircle(c.id, name = name, done = ::onCircleChanged) }
             },
         ))
-        root.addView(label("모임 종류 · 연인·친구로 바꾸면 일기 공유가 꺼지고 일기에 장소 이름이 빠져요"))
+        root.addView(label("그룹 종류 · 연인·친구로 바꾸면 일기 공유가 꺼지고 일기에 장소 이름이 빠져요"))
         root.addView(row(*CIRCLE_TYPES.map { (type, name) ->
             choice(name, c.type == type) {
                 Api.updateCircle(c.id, type = type) { updated, err ->
@@ -4891,7 +4874,7 @@ class MainActivity : Activity(), Engine.Ui {
                     confirm("${m.name} 님 사진을 뺄까요?", "얼굴은 이름 첫 글자와 색으로 보여요.", "빼기") { Api.deletePhoto(c.id, m.id, ::onCircleChanged) }
                 })
                 addView(small("빼기", c.members.size > 1) {
-                    confirm("${m.name}님을 모임에서 뺄까요?", "${m.name}님이 남긴 메시지·목소리·사진·일기도 함께 지워져요.") {
+                    confirm("${m.name}님을 그룹에서 뺄까요?", "${m.name}님이 남긴 메시지·목소리·사진·일기도 함께 지워져요.") {
                         Api.deleteMember(c.id, m.id) { updated, err ->
                             if (updated != null && store.driverId == m.id) Engine.setDriver(null)
                             onCircleChanged(updated, err)
@@ -4904,12 +4887,12 @@ class MainActivity : Activity(), Engine.Ui {
         }
         root.addView(primary("+ 구성원 추가") { askText("새 구성원 이름", "") { name -> Api.addMember(c.id, name, ::onCircleChanged) } })
 
-        root.addView(section(R.drawable.ic_car, "모임의 차"))
+        root.addView(section(R.drawable.ic_car, "그룹의 차"))
         root.addView(label("차는 한 사람의 차예요. 그 차에서는 주인에게 온 메시지가 나오고, 주인이 남긴 메시지는 나오지 않아요. 새 차는 그 차 화면에서 초대 코드로 들어와요."))
         val list = cars
         when {
             list == null -> root.addView(label("불러오는 중…"))
-            list.isEmpty() -> root.addView(label("아직 들어온 차가 없어요"))
+            list.isEmpty() -> root.addView(label("연결된 차가 없어요"))
         }
         list?.forEach { car ->
             root.addView(LinearLayout(this).apply {
@@ -4933,11 +4916,11 @@ class MainActivity : Activity(), Engine.Ui {
                     }
                 })
                 addView(small("빼기") {
-                    if (car.me) confirm("이 차를 ${c.name}에서 뺄까요?", "다시 쓰려면 초대 코드로 들어오면 돼요. 모임 사람들이 남긴 메시지는 지워지지 않아요.", "연결 끊기") {
+                    if (car.me) confirm("이 차를 ${c.name}에서 뺄까요?", "다시 쓰려면 초대 코드로 들어오면 돼요. 그룹 사람들이 남긴 메시지는 지워지지 않아요.", "연결 끊기") {
                         Engine.unlink { ok -> if (!ok) toast("서버에 연결하지 못했어요") else { history.clear(); screen = Screen.HOME; render() } }
                     }
-                    else confirm("${car.name}을(를) 모임에서 뺄까요?", "그 차는 처음 화면으로 돌아가고, 다시 쓰려면 초대 코드로 들어와야 해요.", "빼기") {
-                        Api.removeCar(car.id) { ok -> if (!ok) toast("빼지 못했어요"); loadCars() }
+                    else confirm("${car.name}을(를) 그룹에서 뺄까요?", "그 차는 처음 화면으로 돌아가고, 다시 쓰려면 초대 코드로 들어와야 해요.", "빼기") {
+                        Api.removeCar(car.id) { ok -> if (!ok) toast("내보내지 못했어요"); loadCars() }
                     }
                 })
             })
@@ -4951,7 +4934,7 @@ class MainActivity : Activity(), Engine.Ui {
     private fun renderGroups() {
         val joined = store.memberships
         root.addView(pageHead("그룹 ${joined.size}개", "그룹 관리",
-            "그룹을 고르면 이름, 구성원, 초대 코드를 바꿀 수 있어요",
+            "그룹을 눌러 구성원과 초대 코드를 관리하세요",
             right = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 addView(pill("초대 코드로 들어가기", dark = false, heightDp = 72) { startJoin() })
@@ -4971,7 +4954,7 @@ class MainActivity : Activity(), Engine.Ui {
             mid.addView(groupMembersCard(c), LinearLayout.LayoutParams(-1, -2))
             right.addView(groupInviteCard(c), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(16) })
             right.addView(groupCarsCard(c), LinearLayout.LayoutParams(-1, -2))
-            right.addView(text("「${c.name}」 지우기", 21f, MEMBER_COLORS["red"] ?: ACCENT, weight = 700).apply {
+            right.addView(text("그룹 삭제", 21f, MEMBER_COLORS["red"] ?: ACCENT, weight = 700).apply {
                 gravity = Gravity.CENTER_VERTICAL or Gravity.END; setPadding(dp(16), 0, dp(16), 0); isClickable = true
                 setOnClickListener { deleteCircle() }
             }, LinearLayout.LayoutParams(-1, dp(64)).apply { topMargin = dp(6) })
@@ -5000,7 +4983,7 @@ class MainActivity : Activity(), Engine.Ui {
         if (i < ids.lastIndex) acts += "아래로 내리기" to { Api.reorderMembers(c.id, ids.toMutableList().apply { add(i + 1, removeAt(i)) }, ::onCircleChanged) }
         if (m.photoUrl != null) acts += "사진 빼기" to { confirm("${m.name} 님 사진을 뺄까요?", "얼굴은 이름 첫 글자와 색으로 보여요.", "빼기") { Api.deletePhoto(c.id, m.id, ::onCircleChanged) } }
         if (c.members.size > 1) acts += "그룹에서 빼기" to {
-            confirm("${m.name}님을 그룹에서 뺄까요?", "${m.name}님이 남긴 안부·목소리·사진·일기도 함께 지워져요.") {
+            confirm("${m.name}님을 그룹에서 뺄까요?", "${m.name}님이 남긴 메시지·목소리·사진·일기도 함께 지워져요.") {
                 Api.deleteMember(c.id, m.id) { updated, err ->
                     if (updated != null && store.driverId == m.id) Engine.setDriver(null)
                     onCircleChanged(updated, err)
@@ -5041,7 +5024,7 @@ class MainActivity : Activity(), Engine.Ui {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
                 setPadding(0, dp(16), 0, 0)
                 addView(faceStack(cc.members.map { it.name to it }, 44))
-                addView(text(if (ms.circleId in store.pausedCircles) "쉬는 중 · 이 차에서 안 열려요" else "이 차 주인 · ${ms.ownerId?.let { cc.nameOf(it) } ?: "아직 없음"}", 19f, MUTED).apply { setPadding(dp(14), 0, 0, 0); maxLines = 1 },
+                addView(text(if (ms.circleId in store.pausedCircles) "일시 중지됨" else "${ms.ownerId?.let { cc.nameOf(it) } ?: "주인 없음"}의 차", 19f, MUTED).apply { setPadding(dp(14), 0, 0, 0); maxLines = 1 },
                     LinearLayout.LayoutParams(0, -2, 1f))
             })
         }
@@ -5082,7 +5065,7 @@ class MainActivity : Activity(), Engine.Ui {
                 addView(text(c.name, 34f, INK, weight = 800).apply { letterSpacing = -0.02f })
                 addView(text("구성원 ${c.members.size}명", 20f, MUTED))
             }, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(pill("이름 바꾸기", dark = false, heightDp = 64) {
+            addView(pill("이름 변경", dark = false, heightDp = 64) {
                 askText("그룹 이름", c.name, suggestions = CIRCLE_NAME_HINTS.getValue(c.type)) { name -> Api.updateCircle(c.id, name = name, done = ::onCircleChanged) }
             })
         })
@@ -5128,7 +5111,7 @@ class MainActivity : Activity(), Engine.Ui {
     /** 구성원: 얼굴 · 이름 · 호칭 · (이 차 주인) · 편집 (이름·호칭·색·순서·사진·빼기는 편집 안에) */
     private fun groupMembersCard(c: Circle) = panel().apply {
         setPadding(dp(30), dp(24), dp(30), dp(12))
-        addView(cardHead("구성원 ${c.members.size}명", "이 순서대로 얼굴 줄에 나와요",
+        addView(cardHead("구성원 ${c.members.size}명", null,
             pill("+ 추가", dark = true, heightDp = 60) { askText("새 구성원 이름", "") { name -> Api.addMember(c.id, name, ::onCircleChanged) } }))
         c.members.forEachIndexed { i, m ->
             addView(thinLine(), LinearLayout.LayoutParams(-1, dp(1)))
@@ -5138,7 +5121,7 @@ class MainActivity : Activity(), Engine.Ui {
                 addView(avatar(m.name, 56, member = m), LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(16) })
                 addView(text(m.name, 25f, INK, weight = 700))
                 if (m.title.isNotBlank() && m.title != m.name) addView(text(m.title, 20f, MUTED).apply { setPadding(dp(10), 0, 0, 0) })
-                if (m.id == store.driverId) addView(text("이 차 주인", 17f, ACCENT, weight = 700).apply {
+                if (m.id == store.driverId) addView(text("나", 17f, ACCENT, weight = 700).apply {
                     setPadding(dp(12), dp(4), dp(12), dp(4)); background = GradientDrawable().apply { setColor(CHIP); cornerRadius = dp(16).toFloat() }
                 }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(12) })
                 addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))
@@ -5153,7 +5136,7 @@ class MainActivity : Activity(), Engine.Ui {
     private fun groupInviteCard(c: Circle) = panel().apply {
         setPadding(dp(32), dp(28), dp(32), dp(16))
         setPadding(dp(30), dp(24), dp(30), dp(12))
-        addView(cardHead("초대 코드", "그 사람 차에서 「초대 코드로 들어가기」에 넣으면 바로 들어와요"))
+        addView(cardHead("초대 코드", "각자 차에서 코드를 입력하면 바로 연결돼요"))
         val people = invitees
         if (people == null) {
             addView(text("불러오는 중…", 22f, MUTED).apply { setPadding(0, dp(8), 0, dp(16)) })
@@ -5161,7 +5144,7 @@ class MainActivity : Activity(), Engine.Ui {
             return@apply
         }
         val list = people.filter { it.id != store.driverId }
-        if (list.isEmpty()) addView(text("초대할 사람이 없어요. 구성원을 먼저 추가해 주세요", 22f, MUTED).apply { setPadding(0, dp(8), 0, dp(16)) })
+        if (list.isEmpty()) addView(text("구성원을 먼저 추가해 주세요", 22f, MUTED).apply { setPadding(0, dp(8), 0, dp(16)) })
         list.forEachIndexed { i, p ->
             if (i > 0) addView(thinLine(), LinearLayout.LayoutParams(-1, dp(1)))
             addView(LinearLayout(context).apply {
@@ -5175,7 +5158,7 @@ class MainActivity : Activity(), Engine.Ui {
                         letterSpacing = if (code.length > 8) 0.02f else 0.08f; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
                 }, LinearLayout.LayoutParams(0, -2, 1f))
                 addView(miniPill("새 코드") {
-                    confirm("${p.name}님 코드를 새로 만들까요?", "예전 코드로는 더 들어올 수 없어요. 이미 들어온 차는 그대로예요.", "새로 만들기") {
+                    confirm("${p.name}님 코드를 새로 만들까요?", "이전 코드는 더 이상 쓸 수 없어요. 이미 연결된 차는 그대로 유지돼요.", "새로 만들기") {
                         Api.invitees(resetFor = p.id) { l -> if (l != null) { invitees = l; render() } else toast("서버에 연결하지 못했어요") }
                     }
                 })
@@ -5187,11 +5170,11 @@ class MainActivity : Activity(), Engine.Ui {
     private fun groupCarsCard(c: Circle) = panel().apply {
         setPadding(dp(32), dp(28), dp(32), dp(16))
         setPadding(dp(30), dp(24), dp(30), dp(12))
-        addView(cardHead("그룹의 차", "차 한 대는 한 사람의 차예요"))
+        addView(cardHead("연결된 차", null))
         val list = cars
         when {
             list == null -> addView(text("불러오는 중…", 22f, MUTED).apply { setPadding(0, dp(8), 0, dp(16)) })
-            list.isEmpty() -> addView(text("아직 들어온 차가 없어요", 22f, MUTED).apply { setPadding(0, dp(8), 0, dp(16)) })
+            list.isEmpty() -> addView(text("연결된 차가 없어요", 22f, MUTED).apply { setPadding(0, dp(8), 0, dp(16)) })
         }
         list?.forEach { car ->
             addView(thinLine(), LinearLayout.LayoutParams(-1, dp(1)))
@@ -5204,20 +5187,20 @@ class MainActivity : Activity(), Engine.Ui {
                 }, LinearLayout.LayoutParams(dp(64), dp(64)).apply { marginEnd = dp(18) })
                 addView(column().apply {
                     addView(text(car.name.ifBlank { "이름 없는 차" }, 23f, INK, weight = 700).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
-                    addView(text("주인 ${car.ownerId?.let { c.nameOf(it) } ?: "아직 없음"}" + if (car.me) " · 이 차" else "", 19f, if (car.me) ACCENT else MUTED))
+                    addView(text((car.ownerId?.let { c.nameOf(it) } ?: "주인 없음") + if (car.me) " · 지금 이 차" else "", 19f, if (car.me) ACCENT else MUTED))
                 }, LinearLayout.LayoutParams(0, -2, 1f))
-                addView(miniPill("이름") {
+                addView(miniPill("이름 변경") {
                     askText("차 이름", car.name) { name ->
                         if (car.me) Engine.renameCar(name) { ok -> if (!ok) toast("바꾸지 못했어요"); loadCars() }
                         else Api.renameOtherCar(car.id, name) { ok -> if (!ok) toast("바꾸지 못했어요"); loadCars() }
                     }
                 })
-                addView(miniPill(if (car.me) "연결 끊기" else "빼기", color = MEMBER_COLORS["red"] ?: INK) {
-                    if (car.me) confirm("이 차를 ${c.name}에서 뺄까요?", "다시 쓰려면 초대 코드로 들어오면 돼요. 그룹 사람들이 남긴 안부는 지워지지 않아요.", "연결 끊기") {
+                addView(miniPill(if (car.me) "연결 해제" else "내보내기", color = MEMBER_COLORS["red"] ?: INK) {
+                    if (car.me) confirm("「${c.name}」 연결을 해제할까요?", "초대 코드를 다시 입력하면 언제든 연결할 수 있어요. 남겨진 메시지는 그대로예요.", "연결 해제") {
                         Engine.unlink { ok -> if (!ok) toast("서버에 연결하지 못했어요") else { history.clear(); screen = Screen.HOME; render() } }
                     }
-                    else confirm("${car.name}을(를) 그룹에서 뺄까요?", "그 차는 처음 화면으로 돌아가고, 다시 쓰려면 초대 코드로 들어와야 해요.", "빼기") {
-                        Api.removeCar(car.id) { ok -> if (!ok) toast("빼지 못했어요"); loadCars() }
+                    else confirm("${car.name.ifBlank { "이 차" }}를 내보낼까요?", "다시 연결하려면 초대 코드를 입력해야 해요.", "내보내기") {
+                        Api.removeCar(car.id) { ok -> if (!ok) toast("내보내지 못했어요"); loadCars() }
                     }
                 })
             })
@@ -5479,10 +5462,10 @@ class MainActivity : Activity(), Engine.Ui {
         private const val RECORD_TAP_GAP_MS = 1000L
         /** 남기기 장소: 「지도에서 고르기」를 골랐다는 표시 (leaveKey) */
         private const val MAP_PICK = "_map_pick"
-        /** 모임 이름 보기 */
+        /** 그룹 이름 보기 */
         private val CIRCLE_NAME_HINTS = mapOf(
             "family" to listOf("우리집", "우리 가족", "본가", "외가"),
-            "friends" to listOf("우리 모임", "친구들", "동창 모임", "동네 친구"),
+            "friends" to listOf("우리 그룹", "친구들", "동창 그룹", "동네 친구"),
             "couple" to listOf("우리 둘", "우리"),
         )
         /** 호칭 보기 */
@@ -5494,10 +5477,10 @@ class MainActivity : Activity(), Engine.Ui {
         /** 서버에 닿지 않아 처리방침을 못 받았을 때 보여 줄 요약 */
         private const val PRIVACY_FALLBACK = "<meta name='viewport' content='width=device-width'><body style='font-family:sans-serif;font-size:20px;line-height:1.6'>" +
             "<h3>개인정보 처리방침 요약</h3><ul>" +
-            "<li>받는 것: 모임·구성원 이름과 호칭·얼굴 색, 메시지 글과 목소리, 메시지 장소, 「들었어요」 기록, 공유를 켠 일기 항목, 차 고유번호의 해시값과 차 이름</li>" +
+            "<li>받는 것: 그룹·구성원 이름과 호칭·얼굴 색, 메시지 글과 목소리, 메시지 장소, 「들었어요」 기록, 공유를 켠 일기 항목, 차 고유번호의 해시값과 차 이름</li>" +
             "<li>받지 않는 것: 차의 현재 위치와 다닌 길, 옆자리에 누가 탔는지, 전화번호·이메일·비밀번호</li>" +
-            "<li>같은 모임 사람만 볼 수 있고, 다른 사람에게 주거나 광고에 쓰지 않아요</li>" +
-            "<li>차 설정과 모임 관리에서 언제든 지울 수 있어요</li></ul>" +
+            "<li>같은 그룹 사람만 볼 수 있고, 다른 사람에게 주거나 광고에 쓰지 않아요</li>" +
+            "<li>차 설정과 그룹 관리에서 언제든 지울 수 있어요</li></ul>" +
             "<p>서버에 연결되면 전체 내용을 볼 수 있어요.</p></body>"
         private val THEMES =listOf("auto" to "차 설정 따르기", "day" to "밝게", "night" to "어둡게")
         private val CIRCLE_TYPES =listOf("family" to "가족", "couple" to "연인", "friends" to "친구")
@@ -5527,7 +5510,7 @@ class MainActivity : Activity(), Engine.Ui {
         private val WITH_PLACE = setOf("place", "park", "region")
         /** 시연 이동·시동·세우기 버튼 (앱만 버전·개발 빌드에서만, 실차 배포에는 없음) */
         private val DEMO_MOVE = BuildConfig.STANDALONE || BuildConfig.DEBUG
-        /** 「들은 안부」에 처음 보여 줄 개수 */
+        /** 「들은 메시지」에 처음 보여 줄 개수 */
         private const val HEARD_PREVIEW = 4
         private val WHEN_HOURS = listOf("any" to "언제든", "morning" to "아침 6~10시", "evening" to "저녁 17~21시", "night" to "밤 23~5시")
         private val WHEN_HOUR_RANGE = mapOf("morning" to (6 to 10), "evening" to (17 to 21), "night" to (23 to 5))
@@ -5538,7 +5521,7 @@ class MainActivity : Activity(), Engine.Ui {
             (1..7).associate { "d$it" to setOf(it) }
         private val WHEN_UNTIL = listOf("forever" to "기한 없음", "week" to "1주일 뒤", "month" to "한 달 뒤", "year" to "1년 뒤")
         private val WHEN_FROM = listOf("now" to "오늘", "tomorrow" to "내일", "week" to "다음 주", "year" to "1년 뒤")
-        /** 「매번」은 잔소리가 되어 뺐다 (예전에 남긴 always 안부는 Engine에서 그대로 연다) */
+        /** 「매번」은 잔소리가 되어 뺐다 (예전에 남긴 always 메시지는 Engine에서 그대로 연다) */
         private val REPEATS = listOf("once" to "한 번만", "weekly" to "주 1회까지")
         private val WHEN_ICONS = mapOf("place" to R.drawable.ic_pin, "rain" to R.drawable.ic_rain, "night" to R.drawable.ic_moon, "together" to R.drawable.ic_people, "door" to R.drawable.ic_door,
             "start" to R.drawable.ic_play, "park" to R.drawable.ic_home, "long" to R.drawable.ic_car, "region" to R.drawable.ic_map, "warning" to R.drawable.ic_shield)
@@ -5623,7 +5606,7 @@ class MainActivity : Activity(), Engine.Ui {
             }
         }
 
-        /** 왼쪽 메뉴 줄: 화면 · 선 아이콘 · 이름. 메인은 안부 지도. 설정은 맨 아래로 떨어진다. */
+        /** 왼쪽 메뉴 줄: 화면 · 선 아이콘 · 이름. 메인은 메시지 지도. 설정은 맨 아래로 떨어진다. */
         private val RAIL = listOf(
             Triple(Screen.HOME, R.drawable.ic_map, "메인"),
             Triple(Screen.LEAVE, R.drawable.ic_edit, "메시지"),
@@ -5633,7 +5616,7 @@ class MainActivity : Activity(), Engine.Ui {
         )
         /** 앱만 버전의 「시연」 메뉴 (설정 바로 위) */
         private val DEMO_RAIL = Triple(Screen.DEMO, R.drawable.ic_play, "시연")
-        /** 모임 색 (모임마다 하나, 들어간 순서대로) */
+        /** 그룹 색 (그룹마다 하나, 들어간 순서대로) */
         private val CIRCLE_COLOR_NAMES = listOf("blue", "orange", "green", "purple", "pink", "teal", "red")
         /** 지도 단계 경계 (확대 수준) */
         /** 지도 글자 크기 배율 */

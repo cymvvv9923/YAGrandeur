@@ -7,8 +7,8 @@
    "inviteCode": "demo-home-all",
    "members": [
     {
-     "id": "wonwoo",
-     "name": "원우",
+     "id": "yongmin",
+     "name": "용민",
      "title": "",
      "color": "blue",
      "code": "demo-home"
@@ -28,11 +28,11 @@
      "code": "demo-mom"
     },
     {
-     "id": "yongmin",
-     "name": "용민",
+     "id": "wonwoo",
+     "name": "원우",
      "title": "둘째",
      "color": "green",
-     "code": "demo-yongmin"
+     "code": "demo-wonwoo"
     },
     {
      "id": "hyeonggyu",
@@ -57,8 +57,8 @@
    "inviteCode": "demo-friends-all",
    "members": [
     {
-     "id": "f_wonwoo",
-     "name": "원우",
+     "id": "f_yongmin",
+     "name": "용민",
      "title": "",
      "color": "blue",
      "code": "demo-friends"
@@ -93,8 +93,8 @@
    "inviteCode": "demo-couple-all",
    "members": [
     {
-     "id": "c_wonwoo",
-     "name": "원우",
+     "id": "c_yongmin",
+     "name": "용민",
      "title": "",
      "color": "blue",
      "code": "demo-couple"
@@ -111,10 +111,10 @@
  ],
  "messages": [
   {
-   "id": "msg_w_pass",
+   "id": "msg_y_pass",
    "circleId": "home",
-   "authorId": "wonwoo",
-   "authorName": "원우",
+   "authorId": "yongmin",
+   "authorName": "용민",
    "when": "start",
    "placeName": "시동 걸 때",
    "lat": 0,
@@ -122,16 +122,16 @@
    "radiusM": 500,
    "kind": "voice",
    "text": "나 합격했어! 금요일에 내려가서 자세히 얘기할게",
-   "audioUrl": "/media/seed_v_wonwoo_pass.wav",
+   "audioUrl": "/media/seed_v_yongmin_pass.wav",
    "createdAt": "2026-11-11T13:10:00.000Z",
    "hidden": false,
    "reports": []
   },
   {
-   "id": "msg_w_mis",
+   "id": "msg_y_mis",
    "circleId": "home",
-   "authorId": "wonwoo",
-   "authorName": "원우",
+   "authorId": "yongmin",
+   "authorName": "용민",
    "when": "door",
    "placeName": "차에 탈 때",
    "lat": 0,
@@ -159,21 +159,21 @@
    "lon": 0,
    "radiusM": 500,
    "kind": "voice",
-   "text": "장하다 우리 원우. 조심히 내려와",
+   "text": "장하다 우리 용민이. 조심히 내려와",
    "audioUrl": "/media/seed_v_mom_reply.wav",
    "createdAt": "2026-11-12T00:20:00.000Z",
    "hidden": false,
    "reports": [],
    "to": [
-    "wonwoo"
+    "yongmin"
    ],
-   "replyTo": "msg_w_pass"
+   "replyTo": "msg_y_pass"
   },
   {
    "id": "msg_m1_long1",
    "circleId": "home",
-   "authorId": "yongmin",
-   "authorName": "용민",
+   "authorId": "wonwoo",
+   "authorName": "원우",
    "when": "long",
    "placeName": "오래 운전할 때",
    "lat": 0,
@@ -186,7 +186,7 @@
    "hidden": false,
    "reports": [],
    "to": [
-    "wonwoo"
+    "yongmin"
    ],
    "longMin": 120
   },
@@ -207,7 +207,7 @@
    "hidden": false,
    "reports": [],
    "to": [
-    "f_wonwoo"
+    "f_yongmin"
    ],
    "longMin": 120
   },
@@ -228,7 +228,7 @@
    "hidden": false,
    "reports": [],
    "to": [
-    "wonwoo"
+    "yongmin"
    ]
   },
   {
@@ -248,7 +248,7 @@
    "hidden": false,
    "reports": [],
    "to": [
-    "wonwoo"
+    "yongmin"
    ]
   },
   {
@@ -268,7 +268,7 @@
    "hidden": false,
    "reports": [],
    "to": [
-    "wonwoo"
+    "yongmin"
    ],
    "days": [
     5
@@ -293,14 +293,14 @@
    "hidden": false,
    "reports": [],
    "to": [
-    "wonwoo"
+    "yongmin"
    ]
   },
   {
    "id": "msg_m2_region",
    "circleId": "home",
-   "authorId": "yongmin",
-   "authorName": "용민",
+   "authorId": "wonwoo",
+   "authorName": "원우",
    "when": "region",
    "placeName": "강원 강릉시",
    "lat": 37.7519,
@@ -313,7 +313,7 @@
    "hidden": false,
    "reports": [],
    "to": [
-    "wonwoo"
+    "yongmin"
    ],
    "regionCode": "32030"
   },
@@ -334,7 +334,7 @@
    "hidden": false,
    "reports": [],
    "to": [
-    "wonwoo"
+    "yongmin"
    ],
    "notBefore": "2026-11-08"
   },
@@ -355,7 +355,7 @@
    "hidden": false,
    "reports": [],
    "to": [
-    "c_wonwoo"
+    "c_yongmin"
    ]
   },
   {
@@ -375,7 +375,7 @@
    "hidden": false,
    "reports": [],
    "to": [
-    "wonwoo"
+    "yongmin"
    ]
   },
   {
@@ -395,7 +395,7 @@
    "hidden": false,
    "reports": [],
    "to": [
-    "f_wonwoo"
+    "f_yongmin"
    ]
   },
   {
@@ -415,7 +415,7 @@
    "hidden": false,
    "reports": [],
    "to": [
-    "f_wonwoo"
+    "f_yongmin"
    ]
   },
   {
@@ -435,7 +435,7 @@
    "hidden": false,
    "reports": [],
    "to": [
-    "wonwoo"
+    "yongmin"
    ]
   },
   {
@@ -455,7 +455,7 @@
    "hidden": false,
    "reports": [],
    "to": [
-    "f_wonwoo"
+    "f_yongmin"
    ]
   },
   {
@@ -580,8 +580,8 @@
   {
    "id": "msg_fill07",
    "circleId": "home",
-   "authorId": "yongmin",
-   "authorName": "용민",
+   "authorId": "wonwoo",
+   "authorName": "원우",
    "when": "place",
    "placeName": "부산 집 가는 길목",
    "lat": 35.1631,
@@ -768,8 +768,8 @@
  "heard": [
   {
    "messageId": "msg_fill00",
-   "memberId": "wonwoo",
-   "memberName": "원우",
+   "memberId": "yongmin",
+   "memberName": "용민",
    "at": "2026-10-20T03:30:00.000Z",
    "lastAt": "2026-10-20T03:30:00.000Z",
    "carId": null,
@@ -777,8 +777,8 @@
   },
   {
    "messageId": "msg_fill01",
-   "memberId": "wonwoo",
-   "memberName": "원우",
+   "memberId": "yongmin",
+   "memberName": "용민",
    "at": "2026-10-25T01:30:00.000Z",
    "lastAt": "2026-10-25T01:30:00.000Z",
    "carId": null,
@@ -786,8 +786,8 @@
   },
   {
    "messageId": "msg_fill08",
-   "memberId": "wonwoo",
-   "memberName": "원우",
+   "memberId": "yongmin",
+   "memberName": "용민",
    "at": "2026-11-02T00:10:00.000Z",
    "lastAt": "2026-11-02T00:10:00.000Z",
    "carId": null,
@@ -795,8 +795,8 @@
   },
   {
    "messageId": "msg_fill09",
-   "memberId": "f_wonwoo",
-   "memberName": "원우",
+   "memberId": "f_yongmin",
+   "memberName": "용민",
    "at": "2026-11-01T11:00:00.000Z",
    "lastAt": "2026-11-01T11:00:00.000Z",
    "carId": null,
@@ -804,15 +804,15 @@
   },
   {
    "messageId": "msg_fill17",
-   "memberId": "c_wonwoo",
-   "memberName": "원우",
+   "memberId": "c_yongmin",
+   "memberName": "용민",
    "at": "2026-11-05T09:00:00.000Z",
    "lastAt": "2026-11-05T09:00:00.000Z",
    "carId": null,
    "lastCarId": null
   },
   {
-   "messageId": "msg_w_pass",
+   "messageId": "msg_y_pass",
    "memberId": "mom",
    "memberName": "엄마",
    "at": "2026-11-12T00:15:00.000Z",
@@ -821,7 +821,7 @@
    "lastCarId": null
   },
   {
-   "messageId": "msg_w_pass",
+   "messageId": "msg_y_pass",
    "memberId": "dad",
    "memberName": "아빠",
    "at": "2026-11-12T07:40:00.000Z",
@@ -830,7 +830,7 @@
    "lastCarId": null
   },
   {
-   "messageId": "msg_w_pass",
+   "messageId": "msg_y_pass",
    "memberId": "hyeonggyu",
    "memberName": "형규",
    "at": "2026-11-12T08:05:00.000Z",
