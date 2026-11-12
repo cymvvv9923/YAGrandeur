@@ -82,6 +82,9 @@ class MainActivity : Activity(), Engine.Ui {
     private var inviteCode: String? = null
     /** 설정의 「초대」: 사람마다 내 코드 */
     private var invitees: List<Api.Invitee>? = null
+    /** invitees · cars가 어느 그룹 것인지 */
+    private var inviteesFor: String? = null
+    private var carsFor: String? = null
     /** 발견 지도. 지도 화면에서만 있다 (위치가 바뀔 때마다 다시 만들면 확대·이동이 풀린다) */
     /** 남기기 「지도에서 고르기」 지도. 남기기 화면에 있는 동안 같은 지도를 쓴다 */
     private var pickMapView: org.maplibre.android.maps.MapView? = null
@@ -896,12 +899,14 @@ class MainActivity : Activity(), Engine.Ui {
         pickFrom("어떤 그룹인가요?", CIRCLE_TYPES.map { it.second }) { i ->
             val type = CIRCLE_TYPES[i].first
             askText("그룹 이름", if (type == "family") "우리집" else "우리 그룹", suggestions = CIRCLE_NAME_HINTS.getValue(type)) { circleName ->
-                askText("내 이름 (이 차의 주인)", "") { myName ->
+                // 다른 그룹에서 이 차 주인으로 쓰는 이름을 먼저 채워 둔다 (같은 사람이 새 그룹을 만드는 경우가 대부분)
+                val known = store.memberships.firstNotNullOfOrNull { ms -> ms.ownerId?.let { Engine.circles[ms.circleId]?.nameOf(it) } } ?: ""
+                askText("내 이름 (이 차의 주인)", known) { myName ->
                     askText("$myName 님의 호칭 (선택)", "", suggestions = TITLE_HINTS.getValue(type), allowBlank = true, okLabel = "다음", skipLabel = "건너뛰기") { title ->
                         pickColor("$myName 님의 얼굴 색", "blue") { color ->
                             showPrivacy("동의하고 만들기") {
                                 Engine.createCircle(circleName, type, myName, title, color) { err ->
-                                    if (err != null) toast(err) else toast("「$circleName」을(를) 만들었어요. 설정의 초대 코드를 알려 주세요")
+                                    if (err != null) toast(err) else toast("「$circleName」${josa(circleName, "을", "를")} 만들었어요. 설정의 초대 코드를 알려 주세요")
                                     render()
                                 }
                             }
@@ -1113,7 +1118,7 @@ class MainActivity : Activity(), Engine.Ui {
             addView(LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 if (m.isPlace) addView(secondary("들러 가기") {
-                    toast(if (Engine.addStopover(m)) "${m.placeName}을(를) 경유지에 넣었어요" else "경유지를 넣지 못했어요")
+                    toast(if (Engine.addStopover(m)) "${m.placeName}${josa(m.placeName, "을", "를")} 경유지에 넣었어요" else "경유지를 넣지 못했어요")
                 }, LinearLayout.LayoutParams(0, dp(88), 1f).apply { marginEnd = dp(12) })
                 addView(secondary("답장") { Engine.later(); startReply(m) }, LinearLayout.LayoutParams(0, dp(88), 1f).apply { marginEnd = dp(12) })
                 addView(secondary("신고") { Engine.report() }, LinearLayout.LayoutParams(dp(160), dp(88)))
@@ -2156,6 +2161,7 @@ class MainActivity : Activity(), Engine.Ui {
             map.setMinZoomPreference(4.5)
             map.setStyle(mapStyle()) { st ->
                 mainStyle = st
+                addBaseLand(st)
                 addOverlayLayers(st)
                 // 지금 지역으로 시작 (지금 자리가 든 시·도가 꽉 차게). 위치를 모르면 전국.
                 mv.post {
@@ -2180,6 +2186,28 @@ class MainActivity : Activity(), Engine.Ui {
             }
         }
         return mv
+    }
+
+    /**
+     * 인터넷이 없어 길 지도(OpenFreeMap)를 받지 못해도 지도가 하얗게 비지 않게, 앱에 든 시·군·구 경계로
+     * 땅과 경계선을 맨 아래층(물·길 밑)에 깐다. 인터넷이 되면 그 위로 물·길·지명이 그대로 올라온다.
+     */
+    private fun addBaseLand(st: org.maplibre.android.maps.Style) {
+        Regions.load(this)
+        val feats = Regions.districts.flatMap { r ->
+            r.rings.map { ring ->
+                val pts = (ring.indices step 2).map { org.maplibre.geojson.Point.fromLngLat(ring[it + 1], ring[it]) }
+                org.maplibre.geojson.Feature.fromGeometry(org.maplibre.geojson.Polygon.fromLngLats(listOf(pts + pts.first())))
+            }
+        }
+        st.addSource(org.maplibre.android.style.sources.GeoJsonSource("kr-base", org.maplibre.geojson.FeatureCollection.fromFeatures(feats)))
+        val land = org.maplibre.android.style.layers.FillLayer("kr-land", "kr-base").withProperties(
+            org.maplibre.android.style.layers.PropertyFactory.fillColor(if (NIGHT) "#1B2550" else "#FBFCFE"))
+        val line = org.maplibre.android.style.layers.LineLayer("kr-line", "kr-base").withProperties(
+            org.maplibre.android.style.layers.PropertyFactory.lineColor(if (NIGHT) "#3A4A8A" else "#B9C9E2"),
+            org.maplibre.android.style.layers.PropertyFactory.lineWidth(1.4f))
+        if (st.getLayer("water") != null) st.addLayerBelow(land, "water") else st.addLayerAt(land, 1)
+        if (st.getLayer("road-minor") != null) st.addLayerBelow(line, "road-minor") else st.addLayerAbove(line, "kr-land")
     }
 
     /** 우리 그림을 올릴 층: 지역 도형 · 말풍선 · 지금 위치 */
@@ -3187,7 +3215,7 @@ class MainActivity : Activity(), Engine.Ui {
             }
         }
         val riding = Engine.passengerNow
-        out += Scen("together", if (riding) "조수석에서 내리기" else "조수석에 누가 타면", if (riding) "옆자리가 비면 기다리던 메시지를 들려줘요" else "가족 메시지는 보낸 사람을 가리고 먼저 물어요",
+        out += Scen("together", if (riding) "조수석에서 내리기" else "조수석에 누가 타면", if (riding) "옆자리가 비면 기다리던 메시지를 들려줘요" else "보낸 사람을 가리고 들을지 먼저 물어요",
             true, "now", "옆자리") { Engine.demoSignal("together", !riding); render() }
         return out
     }
@@ -3432,7 +3460,7 @@ class MainActivity : Activity(), Engine.Ui {
     private fun deleteCircle() {
         val name = circle?.name ?: return
         confirm("「$name」 그룹을 삭제할까요?", "구성원, 메시지, 목소리, 사진과 연결된 차 정보가 모두 삭제돼요. 되돌릴 수 없어요.", "삭제") {
-            confirm("정말 삭제할까요?", "모든 구성원의 차와 폰에서 「$name」이(가) 사라져요.", "삭제") {
+            confirm("정말 삭제할까요?", "모든 구성원의 차와 폰에서 「$name」${josa(name, "이", "가")} 사라져요.", "삭제") {
                 Engine.deleteCircle { err ->
                     if (err != null) toast(err) else { toast("그룹을 지웠어요"); history.clear(); screen = Screen.HOME }
                     render()
@@ -3632,6 +3660,7 @@ class MainActivity : Activity(), Engine.Ui {
             v.getMapAsync { map ->
                 pickLib = map
                 map.setStyle(mapStyle()) { st ->
+                    addBaseLand(st)
                     st.addImage("pick", pinBitmap(ACCENT, "나"))
                     st.addSource(org.maplibre.android.style.sources.GeoJsonSource("pick"))
                     st.addLayer(org.maplibre.android.style.layers.SymbolLayer("pick", "pick").withProperties(
@@ -3899,7 +3928,7 @@ class MainActivity : Activity(), Engine.Ui {
             setPadding(0, dp(18), 0, 0)
             val dict = when {
                 dictation.listening -> pill("■  다 말했어요", dark = true, heightDp = 88) { dictation.stop() }
-                else -> pill(if (leaveText.isNotBlank() && !recorder.hasRecording) "🎤  말로 이어 쓰기" else "🎤  말로 적기", dark = true, heightDp = 88) { startDictation() }
+                else -> pill(if (leaveText.isNotBlank() && !recorder.hasRecording) "🎤  이어 말하기" else "🎤  말로 적기", dark = true, heightDp = 88) { startDictation() }
             }
             addView(dict, LinearLayout.LayoutParams(0, dp(88), 1.3f))
             val rec = if (recorder.recording) pill("■  녹음 끝", dark = false, heightDp = 88) { if (recordTapOk()) { recorder.stop(); render() } }
@@ -4919,7 +4948,7 @@ class MainActivity : Activity(), Engine.Ui {
                     if (car.me) confirm("이 차를 ${c.name}에서 뺄까요?", "다시 쓰려면 초대 코드로 들어오면 돼요. 그룹 사람들이 남긴 메시지는 지워지지 않아요.", "연결 끊기") {
                         Engine.unlink { ok -> if (!ok) toast("서버에 연결하지 못했어요") else { history.clear(); screen = Screen.HOME; render() } }
                     }
-                    else confirm("${car.name}을(를) 그룹에서 뺄까요?", "그 차는 처음 화면으로 돌아가고, 다시 쓰려면 초대 코드로 들어와야 해요.", "빼기") {
+                    else confirm("${car.name}${josa(car.name, "을", "를")} 그룹에서 뺄까요?", "그 차는 처음 화면으로 돌아가고, 다시 쓰려면 초대 코드로 들어와야 해요.", "빼기") {
                         Api.removeCar(car.id) { ok -> if (!ok) toast("내보내지 못했어요"); loadCars() }
                     }
                 })
@@ -5137,6 +5166,8 @@ class MainActivity : Activity(), Engine.Ui {
         setPadding(dp(32), dp(28), dp(32), dp(16))
         setPadding(dp(30), dp(24), dp(30), dp(12))
         addView(cardHead("초대 코드", "각자 차에서 코드를 입력하면 바로 연결돼요"))
+        // 관리하는 그룹이 바뀌었으면 앞 그룹의 초대 코드를 보이지 않는다
+        if (inviteesFor != c.id) { inviteesFor = c.id; invitees = null }
         val people = invitees
         if (people == null) {
             addView(text("불러오는 중…", 22f, MUTED).apply { setPadding(0, dp(8), 0, dp(16)) })
@@ -5171,6 +5202,8 @@ class MainActivity : Activity(), Engine.Ui {
         setPadding(dp(32), dp(28), dp(32), dp(16))
         setPadding(dp(30), dp(24), dp(30), dp(12))
         addView(cardHead("연결된 차", null))
+        // 새 그룹을 만들거나 코드로 들어가 관리하는 그룹이 바뀌면 앞 그룹의 차 목록을 버리고 다시 받는다
+        if (carsFor != c.id) { carsFor = c.id; if (cars != null) { cars = null; loadCars() } }
         val list = cars
         when {
             list == null -> addView(text("불러오는 중…", 22f, MUTED).apply { setPadding(0, dp(8), 0, dp(16)) })
@@ -5226,6 +5259,8 @@ class MainActivity : Activity(), Engine.Ui {
             filters = arrayOf(android.text.InputFilter.LengthFilter(maxLength))
             setText(initial.take(maxLength)); setSelection(text.length); textSize = INPUT_TEXT_SP; setTextColor(INK)
             if (multiline) { minLines = 3; maxLines = 5 } else isSingleLine = true
+            // 가로 화면에서 키보드가 화면 전체를 덮고 글자를 작게 따로 보여 주지 않게: 입력 창이 키보드 위에 그대로 보인다
+            imeOptions = imeOptions or android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI
         }
         val view = if (suggestions.isEmpty()) input else column().apply {
             setPadding(dp(24), dp(8), dp(24), 0)
@@ -5296,6 +5331,7 @@ class MainActivity : Activity(), Engine.Ui {
             filters = arrayOf(android.text.InputFilter.LengthFilter(MAX_TEXT))
             setText(m.text.take(MAX_TEXT)); setSelection(text.length); textSize = INPUT_TEXT_SP; setTextColor(INK)
             minLines = 3; maxLines = 5
+            imeOptions = imeOptions or android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI
         }
         val speak = navButton("🎤 말로 다시 쓰기") {}
         fun idle() { speak.text = "🎤 말로 다시 쓰기" }
@@ -5358,6 +5394,8 @@ class MainActivity : Activity(), Engine.Ui {
     private fun text(s: String, sp: Float, color: Int, bold: Boolean = false, weight: Int = if (bold) 700 else 400) = TextView(this).apply {
         text = s; textSize = sp; setTextColor(color); typeface = font(weight)
         setLineSpacing(0f, 1.2f)
+        // 한국어 줄바꿈을 어절 단위로: 「왔어\n요」처럼 글자 하나만 다음 줄로 넘어가지 않게
+        if (Build.VERSION.SDK_INT >= 33) lineBreakWordStyle = android.graphics.text.LineBreakConfig.LINE_BREAK_WORD_STYLE_PHRASE
         setPadding(0, dp(4), 0, dp(4))
     }
 

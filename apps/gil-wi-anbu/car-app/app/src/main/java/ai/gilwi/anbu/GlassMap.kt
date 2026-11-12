@@ -47,24 +47,27 @@ class GlassMap(context: Context) : FrameLayout(context) {
 
     var marks: List<Mark> = emptyList()
         set(v) {
+            // 바탕 그림(흐림이 들어가 무겁다)은 권역 색·자리가 바뀔 때만 다시 그린다. 알약만 바뀌면 알약만 바꾼다.
+            val same = v.size == field.size && v.zip(field).all { (a, b) -> a.key == b.key && a.lat == b.lat && a.lon == b.lon && a.top == b.top && a.bottom == b.bottom && a.glow == b.glow && a.level == b.level && a.codes == b.codes }
             field = v
             removeAllViews()
             v.forEach { addView(it.pill, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)) }
-            requestLayout(); markDirty()
+            requestLayout()
+            if (!same) markDirty()
         }
     /** 고른 지역 코드 (없으면 전체) */
     var selected: String? = null
-        set(v) { field = v; markDirty() }
+        set(v) { if (v == field) return; field = v; markDirty() }
     /** 지금 위치 (위도, 경도) */
     var here: Pair<Double, Double>? = null
-        set(v) { field = v; invalidate() }
+        set(v) { if (v == field) return; field = v; invalidate() }
     var onMarkTap: ((Mark) -> Unit)? = null
     /**
      * 메시지가 남겨진 자리 (위도, 경도, 못 들은 것인지). 밤 불빛은 이 자리에서만 난다.
      * 가까운 자리끼리 묶어, 메시지가 많이 모인 곳일수록 크고 밝다. 들은 메시지는 은은하게.
      */
     var lights: List<Triple<Double, Double, Boolean>> = emptyList()
-        set(v) { field = v; markDirty() }
+        set(v) { if (v == field) return; field = v; markDirty() }
     /** 야간: 남색 유리 + 도시 불빛 */
     var night = false
         set(v) { field = v; markDirty() }

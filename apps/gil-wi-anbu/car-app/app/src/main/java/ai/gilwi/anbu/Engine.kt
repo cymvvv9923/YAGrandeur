@@ -316,6 +316,8 @@ object Engine : CarSignals.Listener {
     fun resetDemo(done: () -> Unit) {
         if (!BuildConfig.STANDALONE) return
         player.stop(); playing = null; pending.clear(); skipped.clear()
+        // 시연으로 태운 조수석도 내린다. 그대로 두면 되돌린 뒤에도 모든 메시지가 「보낸 사람을 가렸어요」로 나온다
+        if (demoPassenger) demoSignal("together", false)
         car.demoLocation = null
         LocalServer.reset()
         store.clearPairing()
@@ -542,6 +544,8 @@ object Engine : CarSignals.Listener {
 
     /** 시연 동작(이동·시동·세우기) 동안에는 시간대·요일·날짜 조건과 「하루 한 번」을 보지 않는다. 한 번만 들을 메시지를 이미 들었으면 그대로 안 연다. */
     private var demoNow = false
+    /** 시연 「조수석에 누가 타면」으로 태운 상태 (「처음 상태로」에서 내린다) */
+    private var demoPassenger = false
     private fun demoBypass(action: () -> Unit) { demoNow = true; try { action() } finally { demoNow = false } }
     /** 시연으로 옮겨 둔 자리 (없으면 실제 GPS·내비 위치) */
     val demoLocation get() = car.demoLocation
@@ -567,7 +571,7 @@ object Engine : CarSignals.Listener {
                 "door" -> deliver(messages.filter { it.opensOn == "door" })
                 "rain" -> onWiper(on)
                 "night" -> onLowBeam(on)
-                "together" -> { otherBelt = false; frontBelt = on; onPassenger(on) }
+                "together" -> { demoPassenger = on; otherBelt = false; frontBelt = on; onPassenger(on) }
                 "warning" -> onWarning(1)
                 "long" -> deliver(messages.filter { it.opensOn == "long" })
             }
@@ -681,12 +685,20 @@ object Engine : CarSignals.Listener {
             val d = MainActivity.distanceM(prev.first, prev.second, lat, lon)
             if (d < 2000) { store.addGpsDistance(d); tripMeters += d } // 시연용 순간이동은 거리에서 뺀다
         }
+        val before = pending.size
         matchNearby(lat, lon)
-        changed()
+        // 서 있는 동안에도 같은 위치가 3초마다 온다. 그때마다 화면 전체를 다시 그리면 CPU를 70~90% 쓴다.
+        // 5m 넘게 움직였거나 새 메시지가 열렸을 때만 화면을 고친다.
+        if (prev == null || MainActivity.distanceM(prev.first, prev.second, lat, lon) > 5 || pending.size != before) changed()
     }
+
+    /** 마지막으로 받은 주행거리. 같은 값이 5초마다 와서, 바뀔 때만 화면을 고친다 */
+    private var lastOdoKm = Float.NaN
 
     override fun onOdometer(km: Float) {
         store.onOdometer(km)
+        if (km == lastOdoKm) return
+        lastOdoKm = km
         ui?.changed()
     }
 
