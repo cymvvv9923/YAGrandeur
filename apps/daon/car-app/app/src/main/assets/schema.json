@@ -1,0 +1,26 @@
+{
+  "packageName": "ai.daon.car",
+  "invokeWord": "다온",
+  "appDescription": "DAON (다온, '다녀간 곳에 온기를 남기다') lets a family or friends group leave a few warm words at a place or a driving moment. The words are played back later in the other members' cars when they pass that place or meet that moment.",
+  "version": "0.2.0",
+  "actionCalls": [
+    {
+      "type": "function",
+      "function": {
+        "name": "RECORD_DAON",
+        "description": "Start recording a short spoken message from the driver for one of the driver's groups, such as family or friends; the app then asks for the words and records them itself, so the request does not need to contain the words.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "group": {
+              "type": "string",
+              "description": "The exact name of one of the driver's groups, only when the driver said it right before the request. Leave it out otherwise; the current group is used."
+            }
+          },
+          "required": []
+        },
+        "component": "service"
+      }
+    }
+  ]
+}

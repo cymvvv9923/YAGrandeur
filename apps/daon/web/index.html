@@ -1,0 +1,547 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>다온</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root { --bg:#f7f8fa; --card:#fff; --ink:#131417; --muted:#686a72; --accent:#002c5f; --soft:#edeef2; --line:#e0e1e6; --chip:#e5ecf5; --danger:#d93636; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,"Malgun Gothic",sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:16px; display:flex; justify-content:space-between; align-items:center; gap:8px; max-width:560px; margin:0 auto; }
+  header h1 { font-size:20px; margin:0; }
+  header .sub { font-size:13px; color:var(--muted); }
+  select, input, textarea, button { font:inherit; }
+  main { max-width:560px; margin:0 auto; padding:0 16px 40px; }
+  .tabs { display:flex; gap:6px; margin-bottom:12px; }
+  .tabs button { flex:1; padding:10px 4px; border:1px solid var(--line); background:var(--card); border-radius:10px; }
+  .tabs button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:12px; }
+  h2 { font-size:17px; margin:0 0 6px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  input, textarea, select { width:100%; padding:10px; border:1px solid var(--line); border-radius:10px; background:#fff; }
+  textarea { min-height:80px; resize:vertical; }
+  #map { height:260px; border-radius:10px; }
+  .row { display:flex; gap:8px; align-items:center; }
+  .row > * { flex:1; }
+  .btn { padding:12px; border:0; border-radius:10px; background:var(--accent); color:#fff; width:100%; margin-top:12px; }
+  .btn.ghost { background:var(--soft); color:var(--ink); }
+  .btn.danger { background:#fff; color:var(--danger); border:1px solid var(--danger); }
+  .btn.small { width:auto; padding:8px 12px; margin:0; font-size:14px; }
+  .row > .btn.small, .row > .face { flex:0 0 auto; }
+  .btn:disabled { opacity:.35; }
+  .seg { display:flex; gap:6px; }
+  .seg button { flex:1; padding:8px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  .seg button.on { border-color:var(--accent); color:var(--accent); font-weight:600; background:var(--chip); }
+  .muted { color:var(--muted); font-size:13px; }
+  .item { padding:10px 0; border-bottom:1px solid var(--line); }
+  .item:last-child { border-bottom:0; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  .chips button { padding:6px 10px; border:1px solid var(--line); border-radius:999px; background:#fff; font-size:13px; }
+  .face { width:44px; height:44px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; flex:0 0 44px; overflow:hidden; }
+  .face img { width:100%; height:100%; object-fit:cover; }
+  .colors { display:flex; gap:8px; flex-wrap:wrap; margin-top:6px; }
+  .colors button { width:32px; height:32px; border-radius:50%; border:3px solid transparent; }
+  .colors button.on { border-color:var(--ink); }
+  .code { font-size:28px; letter-spacing:6px; text-align:center; font-weight:700; }
+  .check { display:flex; gap:8px; align-items:flex-start; margin-top:12px; font-size:14px; }
+  .check input { width:auto; margin-top:3px; }
+  #toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#131417; color:#fff; padding:10px 16px; border-radius:10px; display:none; max-width:90%; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<header>
+  <div><h1>다온</h1><div class="sub" id="circleName"></div></div>
+  <select id="me" style="width:auto" class="hidden"></select>
+</header>
+<main>
+
+  <!-- 시작: 이 폰이 아직 모임(가족·친구)에 연결되지 않았을 때 -->
+  <section id="start" class="hidden">
+    <div class="card" id="joinCard">
+      <h2>초대를 받았어요</h2>
+      <p class="muted" id="joinHelp">가족이나 친구가 보낸 초대 링크를 열면 바로 들어갈 수 있어요. 링크 끝의 초대 코드를 넣어도 돼요.</p>
+      <label>초대 코드</label>
+      <input id="inviteCode" placeholder="예: demo-home">
+      <div class="check"><input type="checkbox" id="agreeJoin"><label for="agreeJoin" style="margin:0;color:var(--ink)">이름·메시지·목소리·운전 일기를 모임 사람들과 나누는 데 동의해요 (<a href="privacy.html" target="_blank">개인정보 처리방침</a>)</label></div>
+      <button class="btn" id="joinBtn">동의하고 들어가기</button>
+    </div>
+    <div class="card">
+      <h2>새 모임 만들기</h2>
+      <p class="muted">처음이면 여기서 만들고, 함께할 사람들에게 초대 링크를 보내요. 각자 자기 차에서 서로에게 남기고 들어요.</p>
+      <label>어떤 모임인가요?</label>
+      <div class="seg" id="typeSeg"><button data-type="family" class="on">가족</button><button data-type="friends">친구</button><button data-type="couple">연인</button></div>
+      <label>모임 이름</label><input id="newCircle" placeholder="우리집" maxlength="12">
+      <div class="row">
+        <div><label>내 이름</label><input id="newName" placeholder="용민" maxlength="12"></div>
+        <div><label>호칭 (선택)</label><input id="newTitle" placeholder="아버지" maxlength="12"></div>
+      </div>
+      <label>얼굴 색</label><div class="colors" id="newColors"></div>
+      <div class="check"><input type="checkbox" id="agreeNew"><label for="agreeNew" style="margin:0;color:var(--ink)">이름·메시지·목소리·운전 일기를 모임 사람들과 나누는 데 동의해요 (<a href="privacy.html" target="_blank">개인정보 처리방침</a>)</label></div>
+      <button class="btn" id="createBtn">동의하고 만들기</button>
+    </div>
+  </section>
+
+  <section id="app" class="hidden">
+    <div class="tabs">
+      <button data-tab="write" class="on">남기기</button>
+      <button data-tab="feed">소식</button>
+      <button data-tab="mine">내 메시지</button>
+      <button data-tab="family">모임</button>
+    </div>
+
+    <section id="tab-write">
+      <div class="card">
+        <label>언제 들려줄까요?</label>
+        <div class="seg" id="whenSeg" style="flex-wrap:wrap">
+          <button data-when="place" class="on">이 장소를 지나면</button>
+          <button data-when="rain">비 오는 날</button>
+          <button data-when="night">밤길</button>
+          <button data-when="together">옆자리에 누가 탄 날</button>
+          <button data-when="door">차에 탈 때</button>
+        </div>
+        <p class="muted" id="whenHelp">그 근처를 지나고 차를 세우면 들려줘요.</p>
+      </div>
+      <div class="card" id="placeCard">
+        <label>장소 (지도를 눌러 고르세요)</label>
+        <div id="map"></div>
+        <div class="chips" id="presets"></div>
+        <div class="row">
+          <div><label>장소 이름</label><input id="placeName" placeholder="예: 양평 국수집길"></div>
+          <div style="flex:0 0 110px"><label>반경(m)</label><input id="radius" type="number" value="300" min="100" max="2000"></div>
+        </div>
+        <p class="muted" id="coord">아직 장소를 고르지 않았어요</p>
+      </div>
+      <div class="card">
+        <div class="seg"><button data-kind="voice" class="on">내 목소리</button><button data-kind="text">글 → 기계음</button></div>
+        <div id="voiceBox">
+          <button class="btn ghost" id="recBtn">● 녹음 시작</button>
+          <audio id="preview" controls class="hidden" style="width:100%;margin-top:8px"></audio>
+        </div>
+        <div id="textBox" class="hidden">
+          <label>메시지</label>
+          <textarea id="text" maxlength="300" placeholder="그 길을 지날 때 들려줄 한마디"></textarea>
+          <button class="btn ghost hidden" id="sttBtn">🎤 말하면 글로 적어요</button>
+        </div>
+        <button class="btn" id="sendBtn">남기기</button>
+        <p class="muted">우리 모임 사람만 들을 수 있어요. 조건이 맞으면 받는 사람이 차를 세웠을 때 재생돼요.</p>
+      </div>
+    </section>
+
+    <section id="tab-feed" class="hidden">
+      <div class="card"><b>사람별 소식</b><p class="muted">누가 오늘 어떤 메시지를 들었는지 사람마다 모아 보여요.</p><div id="peopleList"></div></div>
+      <div class="card"><b>내 메시지를 들었어요</b><div id="heardList"></div></div>
+      <div class="card"><b>차의 일기</b><p class="muted">각자 공유하기로 한 항목만 보여요.</p><div id="diaryList"></div></div>
+    </section>
+
+    <section id="tab-mine" class="hidden">
+      <div class="card"><div id="mineList"></div></div>
+    </section>
+
+    <section id="tab-family" class="hidden">
+      <div class="card">
+        <h2>프로필</h2>
+        <p class="muted">차 홈 화면의 얼굴 줄에 이 순서대로 나와요. 폰이 없는 사람도 여기서 만들 수 있어요.</p>
+        <div id="memberList"></div>
+        <button class="btn ghost" id="addMemberBtn">+ 사람 추가</button>
+      </div>
+      <div class="card hidden" id="editCard">
+        <h2 id="editTitle">프로필 고치기</h2>
+        <div class="row">
+          <div><label>이름</label><input id="editName" maxlength="12"></div>
+          <div><label>호칭 (선택)</label><input id="editTitleInput" maxlength="12" placeholder="아버지"></div>
+        </div>
+        <label>얼굴 색</label><div class="colors" id="editColors"></div>
+        <label>사진 (선택, 1.5MB까지)</label>
+        <div class="row"><input type="file" id="photoFile" accept="image/jpeg,image/png,image/webp"><button class="btn small ghost" id="photoDel">사진 빼기</button></div>
+        <button class="btn" id="saveMember">저장</button>
+        <button class="btn danger" id="delMember">이 사람 빼기</button>
+        <p class="muted">빼면 그 사람이 남긴 메시지·목소리·사진·일기도 함께 지워져요.</p>
+      </div>
+      <div class="card">
+        <h2>초대</h2>
+        <p class="muted">이 링크를 카톡 등으로 보내면 받은 사람이 바로 들어와요. 차에서는 「초대 코드로 들어가기」에 아래 코드를 넣어요.</p>
+        <div class="code" id="inviteCodeShow" style="font-size:30px;font-weight:700;letter-spacing:4px;margin:4px 0 8px"></div>
+        <input id="inviteLink" readonly>
+        <div class="row" style="margin-top:8px">
+          <button class="btn small" id="copyInvite">링크 복사</button>
+          <button class="btn small ghost" id="resetInvite">새 링크 만들기</button>
+        </div>
+        <p class="muted">새 링크를 만들면 예전 링크로는 들어올 수 없어요. 이미 들어온 폰은 그대로예요.</p>
+      </div>
+      <div class="card">
+        <h2>차 관리</h2>
+        <div id="carList"></div>
+        <p class="muted">차는 차 화면의 「초대 코드로 들어가기」에 위 초대 코드를 넣으면 들어와요. 차는 한 사람의 차예요. 그 차에서는 그 사람에게 온 메시지가 나오고, 그 사람이 남긴 메시지는 나오지 않아요.</p>
+      </div>
+      <div class="card">
+        <h2>이 폰</h2>
+        <button class="btn ghost" id="leaveBtn">이 폰 연결 끊기</button>
+        <p class="muted">이 폰에서만 빠져요. 모임과 메시지는 그대로예요. 다시 들어오려면 초대 링크가 필요해요.</p>
+        <button class="btn danger" id="deleteCircleBtn">모임 통째로 지우기</button>
+        <p class="muted">모든 프로필·메시지·목소리·사진·일기와 연결된 차·폰이 지워지고 되돌릴 수 없어요.</p>
+      </div>
+    </section>
+  </section>
+</main>
+<div id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const COLORS = { blue: '#0064FF', green: '#02A15A', orange: '#E06A00', purple: '#6B4EE6', pink: '#D63A7C', teal: '#008C8C', red: '#D93636', gray: '#686A72' };
+const LS = { key: 'daon.key', me: 'daon.me' };
+const params = new URLSearchParams(location.search);
+let circle, kind = 'voice', when = 'place', picked = null, marker = null, audioBlob = null, recorder = null, editing = null, map = null;
+
+// 언제 들려줄지: 장소 또는 차 상태 (차가 와이퍼·하향등·조수석·문으로 판단)
+const WHEN_HELP = {
+  place: '그 근처를 지나고 차를 세우면 들려줘요.',
+  rain: '와이퍼를 켠 날, 차를 세우면 들려줘요.',
+  night: '전조등을 켜고 달린 날, 차를 세우면 들려줘요.',
+  together: '조수석에 누가 탄 날, 차를 세우면 들려줘요.',
+  door: '다음에 차 문을 열고 탈 때 들려줘요.',
+};
+
+const PRESETS = [
+  { name: '양평 국수집길', lat: 37.4917, lon: 127.4873 },
+  { name: '양재 사거리', lat: 37.48544722, lon: 127.03636666 },
+  { name: '강남역', lat: 37.497952, lon: 127.027619 },
+  { name: '해운대 바닷길', lat: 35.1587, lon: 129.1604 },
+];
+
+function toast(t) { const e = $('toast'); e.textContent = t; e.style.display = 'block'; setTimeout(() => e.style.display = 'none', 2600); }
+const key = () => { try { return localStorage.getItem(LS.key); } catch { return null; } };
+function setKey(k) { try { k ? localStorage.setItem(LS.key, k) : localStorage.removeItem(LS.key); } catch {} }
+
+// 이 폰의 열쇠(X-Key)를 붙여 보낸다. 서버가 모른다고 하면(401) 처음 화면으로.
+async function api(method, url, body) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (key()) headers['X-Key'] = key();
+  const r = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401 && key()) { setKey(null); showStart(); throw new Error('이 폰이 모임에서 빠졌어요. 초대 링크로 다시 들어와 주세요'); }
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j;
+}
+const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const me = () => $('me').value;
+const fmt = (iso) => new Date(iso).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+function face(m, size = 44) {
+  const c = COLORS[m?.color] || COLORS.gray;
+  const inner = m?.photoUrl ? `<img src="${esc(m.photoUrl)}" alt="">` : esc((m?.name || '?').slice(0, 1));
+  return `<div class="face" style="width:${size}px;height:${size}px;flex-basis:${size}px;background:${c}22;color:${c}">${inner}</div>`;
+}
+
+function colorPicker(el, current, onPick) {
+  el.innerHTML = Object.entries(COLORS).map(([n, c]) => `<button data-c="${n}" style="background:${c}" class="${n === current ? 'on' : ''}" aria-label="${n}"></button>`).join('');
+  el.querySelectorAll('button').forEach((b) => b.onclick = () => { el.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b)); onPick(b.dataset.c); });
+}
+
+// 시작 화면 (모임 만들기 · 초대로 들어가기) ---------------------------------------
+
+let newColor = 'blue', newType = 'family';
+document.querySelectorAll('#typeSeg button').forEach((b) => b.onclick = () => {
+  newType = b.dataset.type;
+  document.querySelectorAll('#typeSeg button').forEach((x) => x.classList.toggle('on', x === b));
+  $('newCircle').placeholder = { family: '우리집', friends: '퇴근길 친구들', couple: '우리 둘' }[newType];
+});
+function showStart() {
+  $('start').classList.remove('hidden'); $('app').classList.add('hidden'); $('me').classList.add('hidden');
+  $('circleName').textContent = '';
+  const inv = params.get('invite');
+  if (inv) { $('inviteCode').value = inv; $('joinHelp').textContent = '초대 링크로 들어왔어요. 동의하면 바로 시작해요.'; }
+  colorPicker($('newColors'), newColor, (c) => newColor = c);
+}
+
+$('joinBtn').onclick = async () => {
+  const code = $('inviteCode').value.trim().replace(/.*[?&]invite=/, '');
+  if (!code) return toast('초대 코드를 넣어 주세요');
+  if (!$('agreeJoin').checked) return toast('동의에 체크해 주세요');
+  try { const r = await api('POST', '/api/join', { inviteCode: code, agreed: true }); setKey(r.key); await startApp(); } catch (e) { toast(e.message); }
+};
+$('createBtn').onclick = async () => {
+  if (!$('newName').value.trim()) return toast('내 이름을 써 주세요');
+  if (!$('agreeNew').checked) return toast('동의에 체크해 주세요');
+  try {
+    const r = await api('POST', '/api/circles', { type: newType, circleName: $('newCircle').value, memberName: $('newName').value, title: $('newTitle').value, color: newColor, agreed: true });
+    setKey(r.key); try { localStorage.setItem(LS.me, r.memberId); } catch {}
+    await startApp(); openTab('family'); toast('모임을 만들었어요. 초대 링크를 보내 보세요');
+  } catch (e) { toast(e.message); }
+};
+
+// 앱 ------------------------------------------------------------------
+
+async function loadCircle() {
+  circle = await api('GET', '/api/circles/me');
+  $('circleName').textContent = circle.name;
+  const saved = (() => { try { return localStorage.getItem(LS.me); } catch { return null; } })();
+  const cur = me() || saved;
+  $('me').innerHTML = circle.members.map((m) => `<option value="${m.id}">나: ${esc(m.name)}</option>`).join('');
+  $('me').value = circle.members.some((m) => m.id === cur) ? cur : circle.members[0].id;
+}
+
+async function startApp() {
+  $('start').classList.add('hidden'); $('app').classList.remove('hidden'); $('me').classList.remove('hidden');
+  await loadCircle();
+  setupMap();
+  // 초대 링크로 들어왔으면 주소창을 정리한다
+  if (params.has('invite')) history.replaceState(null, '', location.pathname);
+}
+
+$('me').onchange = () => {
+  try { localStorage.setItem(LS.me, me()); } catch {}  if (!$('tab-feed').classList.contains('hidden')) loadFeed();
+  if (!$('tab-mine').classList.contains('hidden')) loadMine();
+};
+
+// 탭
+function openTab(t) {
+  document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('on', x.dataset.tab === t));
+  ['write', 'feed', 'mine', 'family'].forEach((x) => $('tab-' + x).classList.toggle('hidden', x !== t));
+  if (t === 'feed') loadFeed();
+  if (t === 'mine') loadMine();
+  if (t === 'family') loadFamily();
+  if (t === 'write' && map) setTimeout(() => map.invalidateSize(), 50);
+}
+document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => openTab(b.dataset.tab));
+
+// 지도
+function setupMap() {
+  if (map || typeof L === 'undefined') return;
+  map = L.map('map').setView([37.5, 127.2], 9);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '© OpenStreetMap' }).addTo(map);
+  map.on('click', (e) => pick(e.latlng.lat, e.latlng.lng));
+  PRESETS.forEach((p) => {
+    const b = document.createElement('button'); b.textContent = p.name;
+    b.onclick = () => { pick(p.lat, p.lon, p.name); map.setView([p.lat, p.lon], 14); };
+    $('presets').appendChild(b);
+  });
+}
+function pick(lat, lon, name) {
+  picked = { lat, lon };
+  if (marker) marker.setLatLng([lat, lon]); else marker = L.marker([lat, lon]).addTo(map);
+  if (name) $('placeName').value = name;
+  $('coord').textContent = `고른 장소: ${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+}
+
+// 언제
+document.querySelectorAll('#whenSeg button').forEach((b) => b.onclick = () => {
+  when = b.dataset.when;
+  document.querySelectorAll('#whenSeg button').forEach((x) => x.classList.toggle('on', x === b));
+  $('whenHelp').textContent = WHEN_HELP[when];
+  $('placeCard').classList.toggle('hidden', when !== 'place');
+  if (when === 'place' && map) setTimeout(() => map.invalidateSize(), 50);
+});
+
+// 음성/글
+document.querySelectorAll('.seg button[data-kind]').forEach((b) => b.onclick = () => {
+  kind = b.dataset.kind;
+  document.querySelectorAll('.seg button[data-kind]').forEach((x) => x.classList.toggle('on', x === b));
+  $('voiceBox').classList.toggle('hidden', kind !== 'voice');
+  $('textBox').classList.toggle('hidden', kind !== 'text');
+});
+
+$('recBtn').onclick = async () => {
+  if (recorder && recorder.state === 'recording') { recorder.stop(); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const chunks = [];
+    recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+    recorder.ondataavailable = (e) => chunks.push(e.data);
+    recorder.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      audioBlob = new Blob(chunks, { type: 'audio/webm' });
+      $('preview').src = URL.createObjectURL(audioBlob);
+      $('preview').classList.remove('hidden');
+      $('recBtn').textContent = '● 다시 녹음';
+    };
+    recorder.start();
+    $('recBtn').textContent = '■ 녹음 끝내기';
+  } catch (e) { toast('마이크를 쓸 수 없어요. 글로 남겨 주세요.'); }
+};
+
+// 말하면 글로 적기 (브라우저 음성 인식이 있을 때만 버튼을 보인다)
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let stt = null;
+if (SR) {
+  $('sttBtn').classList.remove('hidden');
+  $('sttBtn').onclick = () => {
+    if (stt) { stt.stop(); return; }
+    const before = $('text').value.trim();
+    stt = new SR();
+    stt.lang = 'ko-KR'; stt.interimResults = true;
+    stt.onresult = (e) => {
+      const said = Array.from(e.results).map((r) => r[0].transcript).join('');
+      $('text').value = [before, said].filter(Boolean).join(' ').slice(0, 300);
+    };
+    stt.onerror = (e) => toast(e.error === 'not-allowed' ? '마이크를 허락해 주세요' : '말소리를 알아듣지 못했어요');
+    stt.onend = () => { stt = null; $('sttBtn').textContent = '🎤 말로 이어 쓰기'; };
+    stt.start();
+    $('sttBtn').textContent = '■ 다 말했어요';
+  };
+}
+
+function fileToBase64(blob) {
+  return new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.readAsDataURL(blob); });
+}
+
+$('sendBtn').onclick = async () => {
+  if (when === 'place' && !picked) return toast('지도에서 장소를 골라 주세요');
+  const body = when === 'place'
+    ? { authorId: me(), when, placeName: $('placeName').value.trim(), lat: picked.lat, lon: picked.lon, radiusM: Number($('radius').value), kind }
+    : { authorId: me(), when, kind };
+  if (kind === 'voice') {
+    if (!audioBlob) return toast('먼저 녹음해 주세요');
+    body.audioBase64 = await fileToBase64(audioBlob); body.audioExt = 'webm';
+  } else {
+    body.text = $('text').value.trim();
+    if (!body.text) return toast('메시지를 써 주세요');
+  }
+  try {
+    await api('POST', '/api/circles/me/messages', body);
+    toast('남겼어요');
+    $('text').value = ''; audioBlob = null; $('preview').classList.add('hidden'); $('recBtn').textContent = '● 녹음 시작';
+  } catch (e) { toast(e.message); }
+};
+
+// 소식 · 내 메시지 ----------------------------------------------------------
+
+async function loadFeed() {
+  const f = await api('GET', '/api/circles/me/feed');
+  const byName = (n) => circle.members.find((m) => m.name === n);
+  // 사람마다: 오늘 들은 수 · 마지막으로 들은 것 (로그를 늘어놓지 않고 한 줄로)
+  const today = new Date().toDateString();
+  $('peopleList').innerHTML = circle.members.filter((m) => m.id !== me()).map((m) => {
+    const hs = f.heard.filter((h) => h.memberId === m.id).sort((a, b) => (b.lastAt || b.at).localeCompare(a.lastAt || a.at));
+    const todayN = hs.filter((h) => new Date(h.lastAt || h.at).toDateString() === today).length;
+    const last = hs[0];
+    const line = last ? `${esc(last.authorName)}님의 ${esc(last.when && last.when !== 'place' ? '「' + last.placeName + '」' : last.placeName)} 메시지를 들었어요 · ${fmt(last.lastAt || last.at)}` : '아직 들은 메시지가 없어요';
+    return `<div class="item row" style="flex:none">${face(m, 40)}<div style="flex:1"><b>${esc(m.name)}</b> <span class="muted">${todayN ? '오늘 ' + todayN + '개 들음' : ''}</span><div class="muted">${line}</div></div></div>`;
+  }).join('');
+  const heard = f.heard.filter((h) => h.authorId === me()).sort((a, b) => b.at.localeCompare(a.at));
+  $('heardList').innerHTML = heard.length ? heard.map((h) => `<div class="item row" style="flex:none">${face(byName(h.memberName), 36)}<div style="flex:1">${esc(h.memberName)}님이 <b>${esc(h.when && h.when !== 'place' ? '「' + h.placeName + '」' : h.placeName)}</b>에 남긴 메시지를 들었어요<div class="muted">${fmt(h.at)}${h.carName ? ' · ' + esc(h.carName) : ''}</div></div></div>`).join('')
+    : '<p class="muted">아직 없어요. 내가 남긴 메시지를 누군가 들으면 여기에 보여요.</p>';
+  const diaries = f.diaries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  $('diaryList').innerHTML = diaries.length ? diaries.map((d) => `<div class="item"><b>${esc(d.memberName)}</b> · ${esc(d.date)}<div>${esc(d.text)}</div></div>`).join('')
+    : '<p class="muted">공유된 일기가 없어요.</p>';
+}
+
+async function loadMine() {
+  const list = (await api('GET', '/api/circles/me/messages')).filter((m) => m.authorId === me());
+  $('mineList').innerHTML = list.length ? list.map((m) => `<div class="item"><b>${esc(m.placeName)}</b> · ${m.kind === 'voice' ? '목소리' : '글'}<div>${esc(m.text)}</div>${m.audioUrl ? `<audio controls src="${esc(m.audioUrl)}" style="width:100%"></audio>` : ''}<button class="btn ghost" onclick="del('${esc(m.id)}')">지우기</button></div>`).join('')
+    : '<p class="muted">남긴 메시지가 없어요.</p>';
+}
+async function del(id) { try { await api('POST', `/api/messages/${id}/delete`, { memberId: me() }); loadMine(); } catch (e) { toast(e.message); } }
+
+// 가족: 프로필 · 초대 · 차 · 이 폰 ----------------------------------------------
+
+async function loadFamily() {
+  await loadCircle();
+  $('memberList').innerHTML = circle.members.map((m, i) => `<div class="item row" style="flex:none">${face(m)}<div style="flex:1"><b>${esc(m.name)}</b>${m.title ? ` <span class="muted">· ${esc(m.title)}</span>` : ''}${m.id === me() ? ' <span class="muted">(나)</span>' : ''}</div>
+    <button class="btn small ghost" onclick="moveMember(${i},-1)" ${i === 0 ? 'disabled' : ''}>▲</button>
+    <button class="btn small ghost" onclick="moveMember(${i},1)" ${i === circle.members.length - 1 ? 'disabled' : ''}>▼</button>
+    <button class="btn small ghost" onclick="editMember('${esc(m.id)}')">고치기</button></div>`).join('');
+  $('editCard').classList.add('hidden');
+  try {
+    const inv = await api('GET', '/api/circles/me/invite');
+    $('inviteLink').value = `${location.origin}/?invite=${inv.inviteCode}`;
+    $('inviteCodeShow').textContent = inv.inviteCode;
+  } catch (e) { $('inviteLink').value = ''; $('inviteCodeShow').textContent = ''; }
+  const cars = await api('GET', '/api/circles/me/cars');
+  const owner = (id) => circle.members.find((m) => m.id === id);
+  $('carList').innerHTML = cars.length ? cars.map((c) => `<div class="item row" style="flex:none">${owner(c.ownerId) ? face(owner(c.ownerId), 36) : ''}<div style="flex:1"><b>${esc(c.name)}</b> <span class="muted">· ${owner(c.ownerId) ? esc(owner(c.ownerId).name) + '의 차' : '주인 없음'}</span><div class="muted">${c.lastSeenAt ? '마지막 접속 ' + fmt(c.lastSeenAt) : '아직 접속 전'}</div></div>
+    <button class="btn small ghost" onclick="changeOwner('${esc(c.id)}')">주인</button><button class="btn small ghost" onclick="renameCar('${esc(c.id)}','${esc(c.name)}')">이름</button><button class="btn small danger" onclick="removeCar('${esc(c.id)}','${esc(c.name)}')">빼기</button></div>`).join('')
+    : '<p class="muted">연결된 차가 없어요. 차에서 「다온」을 켜면 나오는 코드를 아래에 넣어 주세요.</p>';
+}
+
+async function moveMember(i, d) {
+  const ids = circle.members.map((m) => m.id);
+  ids.splice(i + d, 0, ids.splice(i, 1)[0]);
+  try { await api('POST', '/api/circles/me/members/order', { ids }); loadFamily(); } catch (e) { toast(e.message); }
+}
+
+let editColor = 'gray';
+function editMember(id) {
+  editing = circle.members.find((m) => m.id === id);
+  $('editCard').classList.remove('hidden');
+  $('editTitle').textContent = `${editing.name} 프로필`;
+  $('editName').value = editing.name; $('editTitleInput').value = editing.title || '';
+  editColor = editing.color || 'gray';
+  colorPicker($('editColors'), editColor, (c) => editColor = c);
+  $('photoFile').value = '';
+  $('editCard').scrollIntoView({ behavior: 'smooth' });
+}
+$('saveMember').onclick = async () => {
+  try {
+    await api('POST', `/api/circles/me/members/${editing.id}/update`, { name: $('editName').value, title: $('editTitleInput').value, color: editColor });
+    const f = $('photoFile').files[0];
+    if (f) {
+      if (f.size > 1.5 * 1024 * 1024) return toast('사진이 너무 커요 (1.5MB까지)');
+      await api('POST', `/api/circles/me/members/${editing.id}/photo`, { imageBase64: await fileToBase64(f), ext: f.type.split('/')[1] });
+    }
+    toast('저장했어요'); loadFamily();
+  } catch (e) { toast(e.message); }
+};
+$('photoDel').onclick = async () => { try { await api('POST', `/api/circles/me/members/${editing.id}/photo/delete`); toast('사진을 뺐어요'); loadFamily(); } catch (e) { toast(e.message); } };
+$('delMember').onclick = async () => {
+  if (!confirm(`${editing.name}님을 모임에서 뺄까요? 남긴 메시지·목소리·사진·일기도 함께 지워져요.`)) return;
+  try { await api('POST', `/api/circles/me/members/${editing.id}/delete`); toast('뺐어요'); loadFamily(); } catch (e) { toast(e.message); }
+};
+$('addMemberBtn').onclick = async () => {
+  const name = prompt('새 사람 이름 (폰이 없어도 돼요)');
+  if (!name) return;
+  try { await api('POST', '/api/circles/me/members', { name }); loadFamily(); } catch (e) { toast(e.message); }
+};
+
+$('copyInvite').onclick = async () => {
+  try { await navigator.clipboard.writeText($('inviteLink').value); toast('복사했어요'); } catch { $('inviteLink').select(); toast('링크를 길게 눌러 복사해 주세요'); }
+};
+$('resetInvite').onclick = async () => {
+  if (!confirm('새 링크를 만들까요? 예전 링크로는 더 이상 들어올 수 없어요.')) return;
+  try { await api('POST', '/api/circles/me/invite/reset'); loadFamily(); toast('새 링크를 만들었어요'); } catch (e) { toast(e.message); }
+};
+
+async function changeOwner(id) {
+  const list = circle.members.map((m, i) => `${i + 1}. ${m.name}`).join('\n');
+  const n = Number(prompt(`이 차는 누구 차인가요? 번호를 써 주세요\n${list}`));
+  const m = circle.members[n - 1];
+  if (!m) return;
+  try { await api('POST', `/api/devices/${id}/owner`, { ownerId: m.id }); loadFamily(); toast(`${m.name}의 차로 바꿨어요`); } catch (e) { toast(e.message); }
+}
+async function renameCar(id, old) {
+  const name = prompt('차 이름', old);
+  if (!name) return;
+  try { await api('POST', `/api/devices/${id}/rename`, { name }); loadFamily(); } catch (e) { toast(e.message); }
+}
+async function removeCar(id, name) {
+  if (!confirm(`${name}을(를) 모임에서 뺄까요? 그 차는 다시 등록 코드를 띄워요.`)) return;
+  try { await api('POST', `/api/devices/${id}/delete`); loadFamily(); } catch (e) { toast(e.message); }
+}
+
+$('leaveBtn').onclick = async () => {
+  if (!confirm('이 폰을 모임에서 뺄까요?')) return;
+  try { await api('POST', '/api/devices/me/delete'); } catch {}
+  setKey(null); try { localStorage.removeItem(LS.me); } catch {}
+  showStart();
+};
+$('deleteCircleBtn').onclick = async () => {
+  const name = prompt(`정말 지우려면 모임 이름 「${circle.name}」을(를) 그대로 써 주세요. 되돌릴 수 없어요.`);
+  if (name === null) return;
+  try { await api('POST', '/api/circles/me/delete', { confirm: name }); setKey(null); toast('모임을 지웠어요'); showStart(); } catch (e) { toast(e.message); }
+};
+
+// 시작 ----------------------------------------------------------------
+(async () => {
+  // 다른 가족의 초대 링크를 열었으면 그 가족으로 들어갈지 묻는 화면부터
+  if (key() && !params.has('invite')) {
+    try { await startApp(); return; } catch (e) { if (key()) { toast('서버에 연결하지 못했어요'); return; } }
+  }
+  if (key() && params.has('invite')) setKey(null);
+  showStart();
+})();
+</script>
+</body>
+</html>

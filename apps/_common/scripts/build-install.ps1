@@ -1,4 +1,4 @@
-﻿# 사용법: .\build-install.ps1 -App gil-wi-anbu [-Run]
+﻿# 사용법: .\build-install.ps1 -App daon [-Run]
 # apps\<App>\car-app 을 빌드해서 에뮬레이터에 설치한다. -Run 이면 실행까지.
 param([Parameter(Mandatory)][string]$App, [switch]$Run)
 . "$PSScriptRoot\env.ps1"
